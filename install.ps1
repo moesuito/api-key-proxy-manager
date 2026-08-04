@@ -20,25 +20,35 @@ Write-Host "   Installing NVIDIA NIM API Proxy Manager (nimproxy)..." -Foregroun
 Write-Host "=================================================================" -ForegroundColor Cyan
 Write-Host ""
 
-# 1. Check Python installation
+# 1. Check Python installation with interactive prompt & rollback
 $PythonCmd = Get-Command python -ErrorAction SilentlyContinue
 if (-not $PythonCmd) {
-    Write-Host "[WARNING] Python 3 was not found in your system PATH." -ForegroundColor Yellow
-    Write-Host "Attempting automatic installation of Python via winget..." -ForegroundColor Cyan
+    Write-Host "[!] Python 3 was not detected on your system." -ForegroundColor Yellow
+    Write-Host "    Python 3 is required to run nimproxy." -ForegroundColor Yellow
+    $InstallChoice = Read-Host "Do you want to install Python 3 now? [Y/n]"
+    
+    if ($InstallChoice -and $InstallChoice.Trim().ToLower() -eq 'n') {
+        Write-Host "[!] Installation cancelled by user. Rolling back changes..." -ForegroundColor Red
+        if (Test-Path $InstallDir) { Remove-Item -Path $InstallDir -Recurse -Force -ErrorAction SilentlyContinue }
+        exit 1
+    }
+
+    Write-Host "Installing Python 3 via winget..." -ForegroundColor Cyan
     $WingetCmd = Get-Command winget -ErrorAction SilentlyContinue
     if ($WingetCmd) {
         try {
             & winget install -e --id Python.Python.3.12 --accept-package-agreements --accept-source-agreements
-            $env:PATH = "$env:LOCALAPPDATA\Programs\Python\Python312;$env:PATH"
+            $env:PATH = "$env:LOCALAPPDATA\Programs\Python\Python312;$env:LOCALAPPDATA\Programs\Python\Python312\Scripts;$env:PATH"
             $PythonCmd = Get-Command python -ErrorAction SilentlyContinue
         } catch {
-            Write-Host "[!] Winget installation failed." -ForegroundColor Yellow
+            Write-Host "[!] Automatic Python installation failed via winget." -ForegroundColor Yellow
         }
     }
     
     if (-not $PythonCmd) {
-        Write-Host "[ERROR] Python 3 is required to run nimproxy." -ForegroundColor Red
-        Write-Host "Please install Python 3 from https://www.python.org/downloads/ (check 'Add to PATH') and rerun this installer." -ForegroundColor Yellow
+        Write-Host "[ERROR] Python 3 installation could not be completed." -ForegroundColor Red
+        Write-Host "Please install Python 3 manually from https://www.python.org/downloads/ (check 'Add Python to PATH') and rerun this installer." -ForegroundColor Yellow
+        if (Test-Path $InstallDir) { Remove-Item -Path $InstallDir -Recurse -Force -ErrorAction SilentlyContinue }
         exit 1
     }
 }
