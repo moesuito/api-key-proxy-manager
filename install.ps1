@@ -23,9 +23,24 @@ Write-Host ""
 # 1. Check Python installation
 $PythonCmd = Get-Command python -ErrorAction SilentlyContinue
 if (-not $PythonCmd) {
-    Write-Host "[ERROR] Python 3 was not found in your system PATH." -ForegroundColor Red
-    Write-Host "Please install Python 3 (https://www.python.org/downloads/) and rerun this installer." -ForegroundColor Yellow
-    exit 1
+    Write-Host "[WARNING] Python 3 was not found in your system PATH." -ForegroundColor Yellow
+    Write-Host "Attempting automatic installation of Python via winget..." -ForegroundColor Cyan
+    $WingetCmd = Get-Command winget -ErrorAction SilentlyContinue
+    if ($WingetCmd) {
+        try {
+            & winget install -e --id Python.Python.3.12 --accept-package-agreements --accept-source-agreements
+            $env:PATH = "$env:LOCALAPPDATA\Programs\Python\Python312;$env:PATH"
+            $PythonCmd = Get-Command python -ErrorAction SilentlyContinue
+        } catch {
+            Write-Host "[!] Winget installation failed." -ForegroundColor Yellow
+        }
+    }
+    
+    if (-not $PythonCmd) {
+        Write-Host "[ERROR] Python 3 is required to run nimproxy." -ForegroundColor Red
+        Write-Host "Please install Python 3 from https://www.python.org/downloads/ (check 'Add to PATH') and rerun this installer." -ForegroundColor Yellow
+        exit 1
+    }
 }
 
 # 2. Create Target Directories
