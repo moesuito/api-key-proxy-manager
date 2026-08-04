@@ -5,7 +5,7 @@ import secrets
 from typing import List, Dict, Any
 from dotenv import load_dotenv
 
-APP_VERSION = "0.2.0"
+APP_VERSION = "0.3.0"
 DEFAULT_PORT = 43100
 
 def get_app_dir() -> str:

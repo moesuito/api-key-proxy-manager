@@ -12,6 +12,9 @@ import httpx
 
 from app.config import settings, get_app_dir, save_config_data, load_config_data, APP_VERSION
 
+if sys.platform == "win32":
+    import msvcrt
+
 
 def get_server_pid_file() -> str:
     return os.path.join(get_app_dir(), "server.pid")
@@ -56,7 +59,6 @@ def find_pythonw_executable() -> str:
     if os.path.exists(local_venv_pythonw):
         return local_venv_pythonw
 
-    # Fallback to python.exe
     return sys.executable
 
 
@@ -69,7 +71,6 @@ def start_background_server() -> bool:
     python_bin = find_pythonw_executable()
     app_dir = get_app_dir()
     
-    # Detached creation flag for Windows
     creationflags = 0
     if sys.platform == "win32":
         creationflags = subprocess.CREATE_NO_WINDOW | getattr(subprocess, 'DETACHED_PROCESS', 0x00000008)
@@ -82,7 +83,6 @@ def start_background_server() -> bool:
     
     save_server_pid(proc.pid)
 
-    # Wait up to 5 seconds for startup
     for _ in range(10):
         time.sleep(0.5)
         running, health = is_server_running()
@@ -101,10 +101,15 @@ def stop_background_server() -> bool:
         except Exception:
             pass
 
-    # Also kill any python process listening on server port if pid failed
     time.sleep(0.5)
     running, _ = is_server_running()
     return not running
+
+
+def restart_background_server() -> bool:
+    stop_background_server()
+    time.sleep(0.5)
+    return start_background_server()
 
 
 def set_windows_autostart(enable: bool):
@@ -156,8 +161,6 @@ def configure_claude_code(proxy_key: str = None, model_name: str = None, port: i
         data["env"]["ANTHROPIC_BASE_URL"] = f"http://localhost:{port}"
         data["env"]["ANTHROPIC_AUTH_TOKEN"] = proxy_key
         data["env"]["ANTHROPIC_MODEL"] = model_name
-
-        # Clean up conflicting auth keys if present
         data["env"].pop("ANTHROPIC_API_KEY", None)
 
         with open(settings_file, "w", encoding="utf-8") as f:
@@ -189,10 +192,188 @@ def fetch_available_models(keys: List[str]) -> List[str]:
     return []
 
 
+def handle_model_command(subargs: List[str]):
+    """Handles `nimproxy model` and `nimproxy model set <name>`."""
+    cfg = load_config_data()
+    keys = cfg.get("nvidia_api_keys", settings.NVIDIA_API_KEYS)
+
+    if not subargs or subargs[0] == "list":
+        current_m = settings.DEFAULT_MODEL
+        print("=" * 65)
+        print(f" Current Active Model: {current_m}")
+        print("=" * 65)
+        print("Fetching available models from NVIDIA NIM...")
+        models = fetch_available_models(keys)
+        if models:
+            print("\nAvailable Models:")
+            for idx, m in enumerate(models[:20], 1):
+                cur_tag = " [ACTIVE]" if m == current_m else ""
+                print(f"  {idx}. {m}{cur_tag}")
+            print(f"\nTo switch active model, run: nimproxy model set <model_name>")
+        else:
+            print("[!] Could not fetch model list from NVIDIA NIM.")
+        return
+
+    if subargs[0] == "set" and len(subargs) >= 2:
+        new_model = subargs[1].strip()
+        cfg["default_model"] = new_model
+        save_config_data(cfg)
+        print(f"[✓] Active model updated to: {new_model}")
+        
+        # If Claude Code is configured, sync it
+        configure_claude_code(model_name=new_model)
+
+        running, _ = is_server_running()
+        if running:
+            print("Restarting background server to apply changes...")
+            restart_background_server()
+        return
+
+    print("Usage: nimproxy model | nimproxy model set <model_name>")
+
+
+def handle_key_command(subargs: List[str]):
+    """Handles `nimproxy key` (add, remove, list)."""
+    cfg = load_config_data()
+    keys = cfg.get("nvidia_api_keys", [])
+
+    if not subargs or subargs[0] in ("list", "ls"):
+        print("=" * 65)
+        print(f" Configured NVIDIA NIM API Keys ({len(keys)} total):")
+        print("=" * 65)
+        for idx, k in enumerate(keys, 1):
+            masked = f"{k[:4]}...{k[-4:]}" if len(k) > 8 else "***"
+            print(f"  {idx}. Key: {masked}")
+        print("=" * 65)
+        print("Commands: nimproxy key add <api_key> | nimproxy key remove <index_or_key>")
+        return
+
+    if subargs[0] == "add" and len(subargs) >= 2:
+        new_key = subargs[1].strip()
+        if new_key in keys:
+            print("[!] Key already exists in pool.")
+            return
+        keys.append(new_key)
+        cfg["nvidia_api_keys"] = keys
+        save_config_data(cfg)
+        masked = f"{new_key[:4]}...{new_key[-4:]}" if len(new_key) > 8 else "***"
+        print(f"[✓] Added API Key {masked} to pool. Total keys: {len(keys)}")
+
+        running, _ = is_server_running()
+        if running:
+            restart_background_server()
+        return
+
+    if subargs[0] in ("remove", "rm", "delete") and len(subargs) >= 2:
+        target = subargs[1].strip()
+        removed = False
+        if target.isdigit():
+            idx = int(target) - 1
+            if 0 <= idx < len(keys):
+                rem_k = keys.pop(idx)
+                removed = True
+        else:
+            if target in keys:
+                keys.remove(target)
+                removed = True
+
+        if removed:
+            if len(keys) == 0:
+                print("[!] Warning: All API keys removed. nimproxy requires at least 1 key to run.")
+            cfg["nvidia_api_keys"] = keys
+            save_config_data(cfg)
+            print(f"[✓] Key removed. Remaining keys: {len(keys)}")
+
+            running, _ = is_server_running()
+            if running:
+                restart_background_server()
+        else:
+            print(f"[!] Key or index '{target}' not found in pool.")
+        return
+
+    print("Usage: nimproxy key list | nimproxy key add <key> | nimproxy key remove <index_or_key>")
+
+
+def run_live_stats_dashboard():
+    """Runs a real-time terminal stats dashboard with 1000ms polling and 'q' to quit."""
+    running, health = is_server_running()
+    if not running:
+        print("[!] nimproxy server is not running. Starting background process...")
+        start_background_server()
+        time.sleep(1)
+
+    print("Initializing Live Stats Dashboard... (Press 'q' at any time to exit)\n")
+    time.sleep(0.5)
+
+    def is_q_pressed() -> bool:
+        if sys.platform == "win32":
+            if msvcrt.kbhit():
+                ch = msvcrt.getch()
+                if ch.lower() in (b'q', b'\x03'):
+                    return True
+        return False
+
+    try:
+        while True:
+            running, health = is_server_running()
+            pid = load_server_pid()
+
+            # Clear terminal screen (ANSI or cls)
+            if sys.platform == "win32":
+                os.system("cls")
+            else:
+                print("\033[H\033[J", end="")
+
+            print("=" * 67)
+            print("   NVIDIA NIM Proxy Manager - Live Dashboard (1000ms Refresh)")
+            print("=" * 67)
+            
+            if running and health:
+                key_mgr = health.get("key_manager", {})
+                total_keys = key_mgr.get("total_keys", 0)
+                active_keys = key_mgr.get("active_keys", 0)
+                model = health.get("default_model", settings.DEFAULT_MODEL)
+                proxy_key = settings.PROXY_API_KEY
+
+                total_reqs = sum(k.get("total_requests", 0) for k in key_mgr.get("keys", []))
+                total_errs = sum(k.get("429_errors", 0) for k in key_mgr.get("keys", []))
+
+                print(f" Status           : ONLINE (PID {pid or 'running'})")
+                print(f" Version          : v{APP_VERSION}")
+                print(f" Active Model     : {model}")
+                print(f" Master Proxy Key : {proxy_key}")
+                print(f" Endpoints        : OpenAI: http://localhost:{settings.PORT}/v1")
+                print(f"                    Anthropic: http://localhost:{settings.PORT}")
+                print("-------------------------------------------------------------------")
+                print(" KEY POOL REAL-TIME STATUS:")
+                for k in key_mgr.get("keys", []):
+                    k_masked = k.get("key")
+                    k_status = k.get("status", "active").upper()
+                    reqs = k.get("total_requests", 0)
+                    errs = k.get("429_errors", 0)
+                    print(f"   - Key {k_masked:<16} | Status: {k_status:<12} | Reqs: {reqs:<5} | 429 Errors: {errs}")
+                print("-------------------------------------------------------------------")
+                print(f" TOTAL METRICS    : Active Keys: {active_keys}/{total_keys} | Total Served Requests: {total_reqs}")
+            else:
+                print(" Status           : OFFLINE (Server not responding)")
+            
+            print("=" * 67)
+            print(" [Press 'q' or Ctrl+C to exit live dashboard and return to terminal]")
+
+            for _ in range(10):  # Check keypress every 100ms within 1000ms loop
+                if is_q_pressed():
+                    print("\n\n[✓] Exited live stats dashboard.")
+                    return
+                time.sleep(0.1)
+
+    except KeyboardInterrupt:
+        print("\n\n[✓] Exited live stats dashboard.")
+
+
 def run_interactive_setup():
     """Guided terminal setup flow."""
     print("=" * 65)
-    print("   NVIDIA NIM API Proxy Manager - Guided Setup (v0.2.0)")
+    print("   NVIDIA NIM API Proxy Manager - Guided Setup (v0.3.0)")
     print("=" * 65)
     print()
 
@@ -239,8 +420,6 @@ def run_interactive_setup():
 
     if fetched_models:
         print("\nAvailable Models on NVIDIA NIM:")
-        
-        # Ensure recommended model is listed first
         display_models = []
         if recommended_model in fetched_models:
             display_models.append(recommended_model)
@@ -250,7 +429,6 @@ def run_interactive_setup():
         else:
             display_models = [recommended_model] + fetched_models
 
-        # Display top models
         for idx, m in enumerate(display_models[:15], 1):
             rec_tag = " (Recommended)" if m == recommended_model else ""
             print(f"  {idx}. {m}{rec_tag}")
@@ -352,7 +530,7 @@ def show_status_report(health_data: Dict):
         errs = k.get("429_errors", 0)
         print(f"   - Key {k_masked}: {k_status} (Total Requests: {reqs}, Rate Limits: {errs})")
     print("=" * 65)
-    print(" Commands: 'nimproxy --setup' to reconfigure | 'nimproxy claude' for Claude Code")
+    print(" Commands: 'nimproxy stats' for live dashboard | 'nimproxy model' | 'nimproxy key'")
 
 
 def check_for_updates() -> bool:
@@ -384,6 +562,9 @@ def main():
 
 Usage:
   nimproxy                  Display server status report or auto-start server
+  nimproxy stats            Launch real-time live stats dashboard (1000ms polling, 'q' to exit)
+  nimproxy model [set <name>] Manage active model or switch model instantly
+  nimproxy key [add|remove|list] Manage API Key pool dynamically
   nimproxy start            Start background server process
   nimproxy stop             Stop background server process
   nimproxy restart          Restart background server process
@@ -397,21 +578,30 @@ Options:
   -v, --version             Show version number
 
 Examples:
-  nimproxy                  Checks if background server is online and displays key metrics
-  nimproxy setup            Re-configures API keys, model selection, or Windows startup
+  nimproxy stats            Opens live terminal dashboard with 1s refresh
+  nimproxy model set meta/llama-3.3-70b-instruct   Switches active model immediately
+  nimproxy key add nvapi-...                       Adds new API key to failover pool
   nimproxy claude           Integrates nimproxy with Claude Code automatically
-  nimproxy stop             Gracefully stops the background server
-
-Endpoints Provided:
-  OpenAI Compatible         http://localhost:{settings.PORT}/v1
-  Anthropic Compatible      http://localhost:{settings.PORT}
-  Health Check & Status     http://localhost:{settings.PORT}/health
 =================================================================
 """)
         return
 
     if "--setup" in args or "setup" in args or "config" in args:
         run_interactive_setup()
+        return
+
+    if "stats" in args or "dashboard" in args:
+        run_live_stats_dashboard()
+        return
+
+    if "model" in args:
+        idx = args.index("model")
+        handle_model_command(args[idx + 1:])
+        return
+
+    if "key" in args or "keys" in args:
+        idx = args.index("key") if "key" in args else args.index("keys")
+        handle_key_command(args[idx + 1:])
         return
 
     if "claude" in args:
