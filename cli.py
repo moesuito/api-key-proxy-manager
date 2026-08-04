@@ -114,7 +114,6 @@ def set_windows_autostart(enable: bool):
 
     reg_key = r"Software\Microsoft\Windows\CurrentVersion\Run"
     python_bin = find_pythonw_executable()
-    app_dir = get_app_dir()
     cmd = f'"{python_bin}" -m app.main'
 
     try:
@@ -208,7 +207,7 @@ def run_interactive_setup():
         else:
             display_models = [recommended_model] + fetched_models
 
-        # Display top 10 models
+        # Display top models
         for idx, m in enumerate(display_models[:15], 1):
             rec_tag = " (Recommended)" if m == recommended_model else ""
             print(f"  {idx}. {m}{rec_tag}")
@@ -225,7 +224,6 @@ def run_interactive_setup():
         elif choice.isdigit() and 1 <= int(choice) <= len(display_models[:15]):
             selected_model = display_models[int(choice) - 1]
         else:
-            # Check if typed model string directly
             if choice in fetched_models:
                 selected_model = choice
             else:
@@ -326,18 +324,35 @@ def main():
     args = sys.argv[1:]
 
     # Parse CLI commands
-    if "--help" in args or "-h" in args:
-        print("""
-NVIDIA NIM API Proxy Manager CLI (nimproxy)
+    if "--help" in args or "-h" in args or "help" in args:
+        print(f"""
+=================================================================
+   NVIDIA NIM API Proxy Manager CLI (nimproxy v{APP_VERSION})
+=================================================================
 
 Usage:
-  nimproxy              Display server status or start background server
-  nimproxy start        Start background server
-  nimproxy stop         Stop background server
-  nimproxy restart      Restart background server
-  nimproxy setup        Run guided setup wizard
-  nimproxy update       Check for new releases on GitHub
-  nimproxy version      Display current version
+  nimproxy                  Display server status report or auto-start server
+  nimproxy start            Start background server process
+  nimproxy stop             Stop background server process
+  nimproxy restart          Restart background server process
+  nimproxy setup / config   Run interactive guided setup wizard
+  nimproxy update           Check GitHub releases for updates
+  nimproxy version          Show current version
+
+Options:
+  -h, --help                Show this help message and exit
+  -v, --version             Show version number
+
+Examples:
+  nimproxy                  Checks if background server is online and displays key metrics
+  nimproxy setup            Re-configures API keys, model selection, or Windows startup
+  nimproxy stop             Gracefully stops the background server
+
+Endpoints Provided:
+  OpenAI Compatible         http://localhost:{settings.PORT}/v1
+  Anthropic Compatible      http://localhost:{settings.PORT}
+  Health Check & Status     http://localhost:{settings.PORT}/health
+=================================================================
 """)
         return
 
@@ -369,7 +384,7 @@ Usage:
             print("[✓] nimproxy is already on the latest version!")
         return
 
-    if "version" in args or "--version" in args:
+    if "version" in args or "--version" in args or "-v" in args:
         print(f"nimproxy v{APP_VERSION}")
         return
 
