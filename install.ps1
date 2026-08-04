@@ -13,7 +13,7 @@ $AppName = "nimproxy"
 $InstallDir = Join-Path $env:APPDATA $AppName
 $BinDir = Join-Path $InstallDir "bin"
 $RepoUrl = "https://github.com/moesuito/api-key-proxy-manager"
-$ZipUrl = "$RepoUrl/archive/refs/heads/v0.2.0.zip"
+$ZipUrl = "$RepoUrl/archive/refs/heads/main.zip"
 
 Write-Host "=================================================================" -ForegroundColor Cyan
 Write-Host "   Installing NVIDIA NIM API Proxy Manager (nimproxy)..." -ForegroundColor Cyan

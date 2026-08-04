@@ -20,7 +20,7 @@ A high-performance, low-latency API proxy server designed to manage and automati
 
 Run in PowerShell:
 ```powershell
-irm https://raw.githubusercontent.com/moesuito/api-key-proxy-manager/master/install.ps1 | iex
+irm https://raw.githubusercontent.com/moesuito/api-key-proxy-manager/main/install.ps1 | iex
 ```
 
 This installs `nimproxy` in `%APPDATA%\nimproxy`, adds `nimproxy` to your `PATH`, and launches the guided setup wizard!
