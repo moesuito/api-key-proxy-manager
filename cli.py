@@ -166,14 +166,106 @@ def configure_claude_code(proxy_key: str = None, model_name: str = None, port: i
         with open(settings_file, "w", encoding="utf-8") as f:
             json.dump(data, f, indent=2)
 
-        print(f"[✓] Claude Code successfully configured at {settings_file}!")
-        print(f"    Base URL   : http://localhost:{port}")
-        print(f"    Auth Token : {proxy_key[:8]}...")
-        print(f"    Model      : {model_name}")
+        print(f"[OK] Claude Code successfully configured at {settings_file}!")
+        print(f"     Base URL   : http://localhost:{port}")
+        print(f"     Auth Token : {proxy_key[:8]}...")
+        print(f"     Model      : {model_name}")
         return True
     except Exception as e:
         print(f"[!] Failed to configure Claude Code: {e}")
         return False
+
+
+def configure_opencode(proxy_key: str = None, model_name: str = None, port: int = None) -> bool:
+    """Configures OpenCode (~/.opencode/config.json) to use nimproxy."""
+    user_home = os.path.expanduser("~")
+    opencode_dir = os.path.join(user_home, ".opencode")
+    settings_file = os.path.join(opencode_dir, "config.json")
+
+    proxy_key = proxy_key or settings.PROXY_API_KEY
+    model_name = model_name or settings.DEFAULT_MODEL
+    port = port or settings.PORT
+
+    try:
+        os.makedirs(opencode_dir, exist_ok=True)
+        data = {}
+        if os.path.exists(settings_file):
+            try:
+                with open(settings_file, "r", encoding="utf-8") as f:
+                    data = json.load(f)
+            except Exception:
+                data = {}
+
+        if "providers" not in data or not isinstance(data["providers"], dict):
+            data["providers"] = {}
+
+        data["providers"]["nimproxy"] = {
+            "type": "openai",
+            "baseUrl": f"http://localhost:{port}/v1",
+            "apiKey": proxy_key,
+            "models": [model_name]
+        }
+
+        with open(settings_file, "w", encoding="utf-8") as f:
+            json.dump(data, f, indent=2)
+
+        print(f"[OK] OpenCode successfully configured at {settings_file}!")
+        print(f"     Provider : nimproxy (type: openai)")
+        print(f"     Base URL : http://localhost:{port}/v1")
+        print(f"     API Key  : {proxy_key[:8]}...")
+        print(f"     Model    : {model_name}")
+        return True
+    except Exception as e:
+        print(f"[!] Failed to configure OpenCode: {e}")
+        return False
+
+
+def handle_export_command(subargs: List[str]):
+    """Handles `nimproxy export [opencode|codex|claude|cursor|openai]`."""
+    proxy_key = settings.PROXY_API_KEY
+    model_name = settings.DEFAULT_MODEL
+    port = settings.PORT
+
+    target = subargs[0].lower() if subargs else "all"
+
+    if target in ("opencode", "open-code"):
+        configure_opencode(proxy_key, model_name, port)
+        return
+
+    if target in ("claude", "claudecode"):
+        configure_claude_code(proxy_key, model_name, port)
+        return
+
+    if target in ("codex", "openai", "cursor", "continue"):
+        print("=" * 65)
+        print(f" OpenAI Compatible Configuration ({target.upper()})")
+        print("=" * 65)
+        print(f" Base URL : http://localhost:{port}/v1")
+        print(f" API Key  : {proxy_key}")
+        print(f" Model    : {model_name}")
+        print("=" * 65)
+        return
+
+    # Default / list all exports
+    print("=" * 65)
+    print("   nimproxy Export Configuration for AI Coding Tools")
+    print("=" * 65)
+    print("\n1. OpenCode (~/.opencode/config.json):")
+    print("   Run: 'nimproxy export opencode' to auto-configure!")
+    print(f"   Base URL : http://localhost:{port}/v1")
+    print(f"   API Key  : {proxy_key}")
+
+    print("\n2. Claude Code (~/.claude/settings.json):")
+    print("   Run: 'nimproxy claude' or 'nimproxy export claude' to auto-configure!")
+    print(f"   Base URL : http://localhost:{port}")
+    print(f"   API Key  : {proxy_key}")
+
+    print("\n3. Codex / Cursor / OpenAI Compatible Clients:")
+    print("   Run: 'nimproxy export codex' to view details.")
+    print(f"   OPENAI_BASE_URL = http://localhost:{port}/v1")
+    print(f"   OPENAI_API_KEY  = {proxy_key}")
+    print(f"   MODEL           = {model_name}")
+    print("=" * 65)
 
 
 def fetch_available_models(keys: List[str]) -> List[str]:
@@ -218,9 +310,8 @@ def handle_model_command(subargs: List[str]):
         new_model = subargs[1].strip()
         cfg["default_model"] = new_model
         save_config_data(cfg)
-        print(f"[✓] Active model updated to: {new_model}")
+        print(f"[OK] Active model updated to: {new_model}")
         
-        # If Claude Code is configured, sync it
         configure_claude_code(model_name=new_model)
 
         running, _ = is_server_running()
@@ -257,7 +348,7 @@ def handle_key_command(subargs: List[str]):
         cfg["nvidia_api_keys"] = keys
         save_config_data(cfg)
         masked = f"{new_key[:4]}...{new_key[-4:]}" if len(new_key) > 8 else "***"
-        print(f"[✓] Added API Key {masked} to pool. Total keys: {len(keys)}")
+        print(f"[OK] Added API Key {masked} to pool. Total keys: {len(keys)}")
 
         running, _ = is_server_running()
         if running:
@@ -282,7 +373,7 @@ def handle_key_command(subargs: List[str]):
                 print("[!] Warning: All API keys removed. nimproxy requires at least 1 key to run.")
             cfg["nvidia_api_keys"] = keys
             save_config_data(cfg)
-            print(f"[✓] Key removed. Remaining keys: {len(keys)}")
+            print(f"[OK] Key removed. Remaining keys: {len(keys)}")
 
             running, _ = is_server_running()
             if running:
@@ -318,7 +409,6 @@ def run_live_stats_dashboard():
             running, health = is_server_running()
             pid = load_server_pid()
 
-            # Clear terminal screen (ANSI or cls)
             if sys.platform == "win32":
                 os.system("cls")
             else:
@@ -336,7 +426,6 @@ def run_live_stats_dashboard():
                 proxy_key = settings.PROXY_API_KEY
 
                 total_reqs = sum(k.get("total_requests", 0) for k in key_mgr.get("keys", []))
-                total_errs = sum(k.get("429_errors", 0) for k in key_mgr.get("keys", []))
 
                 print(f" Status           : ONLINE (PID {pid or 'running'})")
                 print(f" Version          : v{APP_VERSION}")
@@ -360,20 +449,20 @@ def run_live_stats_dashboard():
             print("=" * 67)
             print(" [Press 'q' or Ctrl+C to exit live dashboard and return to terminal]")
 
-            for _ in range(10):  # Check keypress every 100ms within 1000ms loop
+            for _ in range(10):
                 if is_q_pressed():
-                    print("\n\n[✓] Exited live stats dashboard.")
+                    print("\n\n[OK] Exited live stats dashboard.")
                     return
                 time.sleep(0.1)
 
     except KeyboardInterrupt:
-        print("\n\n[✓] Exited live stats dashboard.")
+        print("\n\n[OK] Exited live stats dashboard.")
 
 
 def run_interactive_setup():
     """Guided terminal setup flow."""
     print("=" * 65)
-    print("   NVIDIA NIM API Proxy Manager - Guided Setup (v0.3.0)")
+    print(f"   NVIDIA NIM API Proxy Manager - Guided Setup (v{APP_VERSION})")
     print("=" * 65)
     print()
 
@@ -452,12 +541,15 @@ def run_interactive_setup():
     else:
         print(f"[!] Could not fetch model list from NVIDIA NIM. Using default recommended: {recommended_model}")
 
-    print(f"\n[✓] Selected Model: {selected_model}")
+    print(f"\n[OK] Selected Model: {selected_model}")
 
-    # Step 4: Claude Code Auto Configuration
-    print("\n--- Step 3: Claude Code Integration ---")
-    claude_str = input("Automatically configure Claude Code (~/.claude/settings.json)? [Y/n]: ").strip().lower()
+    # Step 4: Claude Code & OpenCode Auto Configuration
+    print("\n--- Step 3: AI Coding Tools Integration ---")
+    claude_str = input("Configure Claude Code (~/.claude/settings.json)? [Y/n]: ").strip().lower()
     setup_claude = claude_str != 'n'
+
+    opencode_str = input("Configure OpenCode (~/.opencode/config.json)? [Y/n]: ").strip().lower()
+    setup_opencode = opencode_str != 'n'
 
     # Step 5: Master Proxy Key
     existing_config = load_config_data()
@@ -484,6 +576,10 @@ def run_interactive_setup():
     if setup_claude:
         print()
         configure_claude_code(proxy_key, selected_model, settings.PORT)
+
+    if setup_opencode:
+        print()
+        configure_opencode(proxy_key, selected_model, settings.PORT)
 
     # Step 7: Start Server in Background
     print("\nStarting background server...")
@@ -530,7 +626,7 @@ def show_status_report(health_data: Dict):
         errs = k.get("429_errors", 0)
         print(f"   - Key {k_masked}: {k_status} (Total Requests: {reqs}, Rate Limits: {errs})")
     print("=" * 65)
-    print(" Commands: 'nimproxy stats' for live dashboard | 'nimproxy model' | 'nimproxy key'")
+    print(" Commands: 'nimproxy export [opencode|codex|claude]' | 'nimproxy stats'")
 
 
 def check_for_updates() -> bool:
@@ -562,6 +658,7 @@ def main():
 
 Usage:
   nimproxy                  Display server status report or auto-start server
+  nimproxy export [target]  Export config or auto-configure (opencode, codex, claude)
   nimproxy stats            Launch real-time live stats dashboard (1000ms polling, 'q' to exit)
   nimproxy model [set <name>] Manage active model or switch model instantly
   nimproxy key [add|remove|list] Manage API Key pool dynamically
@@ -578,16 +675,20 @@ Options:
   -v, --version             Show version number
 
 Examples:
+  nimproxy export opencode  Auto-configures OpenCode (~/.opencode/config.json)
+  nimproxy export codex     Shows OpenAI compatible settings for Codex / Cursor
   nimproxy stats            Opens live terminal dashboard with 1s refresh
-  nimproxy model set meta/llama-3.3-70b-instruct   Switches active model immediately
-  nimproxy key add nvapi-...                       Adds new API key to failover pool
-  nimproxy claude           Integrates nimproxy with Claude Code automatically
 =================================================================
 """)
         return
 
     if "--setup" in args or "setup" in args or "config" in args:
         run_interactive_setup()
+        return
+
+    if "export" in args:
+        idx = args.index("export")
+        handle_export_command(args[idx + 1:])
         return
 
     if "stats" in args or "dashboard" in args:
@@ -612,7 +713,7 @@ Examples:
     if "stop" in args:
         print("Stopping nimproxy background server...")
         if stop_background_server():
-            print("[✓] Server stopped successfully.")
+            print("[OK] Server stopped successfully.")
         else:
             print("[!] Server was not running.")
         return
@@ -622,7 +723,7 @@ Examples:
         stop_background_server()
         time.sleep(1)
         if start_background_server():
-            print("[✓] Server restarted successfully.")
+            print("[OK] Server restarted successfully.")
         else:
             print("[ERRO] Failed to restart server.")
         return
@@ -630,7 +731,7 @@ Examples:
     if "update" in args:
         print(f"Checking for updates (Current version: v{APP_VERSION})...")
         if not check_for_updates():
-            print("[✓] nimproxy is already on the latest version!")
+            print("[OK] nimproxy is already on the latest version!")
         return
 
     if "version" in args or "--version" in args or "-v" in args:
@@ -654,7 +755,7 @@ Examples:
             if health_after:
                 show_status_report(health_after)
             else:
-                print(f"[✓] nimproxy server started successfully in background on port {settings.PORT}!")
+                print(f"[OK] nimproxy server started successfully in background on port {settings.PORT}!")
         else:
             print("[ERRO] Failed to start nimproxy server in background.")
 
