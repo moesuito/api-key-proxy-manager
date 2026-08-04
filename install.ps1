@@ -20,12 +20,30 @@ Write-Host "   Installing NVIDIA NIM API Proxy Manager (nimproxy)..." -Foregroun
 Write-Host "=================================================================" -ForegroundColor Cyan
 Write-Host ""
 
-# 1. Check Python installation with interactive prompt & rollback
+# 1. Check Python installation and version (Requires Python 3.9+)
 $PythonCmd = Get-Command python -ErrorAction SilentlyContinue
+if ($PythonCmd) {
+    try {
+        $PyVerStr = & python -c "import sys; print(f'{sys.version_info.major}.{sys.version_info.minor}')"
+        $PyParts = $PyVerStr.Split(".")
+        $PyMajor = [int]$PyParts[0]
+        $PyMinor = [int]$PyParts[1]
+        
+        if ($PyMajor -lt 3 -or ($PyMajor -eq 3 -and $PyMinor -lt 9)) {
+            Write-Host "[!] Detected Python version $PyVerStr is outdated (Python 3.9+ is required)." -ForegroundColor Yellow
+            $PythonCmd = $null
+        } else {
+            Write-Host "[✓] Compatible Python version detected: $PyVerStr" -ForegroundColor Green
+        }
+    } catch {
+        $PythonCmd = $null
+    }
+}
+
 if (-not $PythonCmd) {
-    Write-Host "[!] Python 3 was not detected on your system." -ForegroundColor Yellow
-    Write-Host "    Python 3 is required to run nimproxy." -ForegroundColor Yellow
-    $InstallChoice = Read-Host "Do you want to install Python 3 now? [Y/n]"
+    Write-Host "[!] Python 3 (v3.9 or higher) was not detected on your system." -ForegroundColor Yellow
+    Write-Host "    Python 3.9+ is required to run nimproxy." -ForegroundColor Yellow
+    $InstallChoice = Read-Host "Do you want to install/upgrade to Python 3.12 now via winget? [Y/n]"
     
     if ($InstallChoice -and $InstallChoice.Trim().ToLower() -eq 'n') {
         Write-Host "[!] Installation cancelled by user. Rolling back changes..." -ForegroundColor Red
@@ -33,7 +51,7 @@ if (-not $PythonCmd) {
         exit 1
     }
 
-    Write-Host "Installing Python 3 via winget..." -ForegroundColor Cyan
+    Write-Host "Installing Python 3.12 via winget..." -ForegroundColor Cyan
     $WingetCmd = Get-Command winget -ErrorAction SilentlyContinue
     if ($WingetCmd) {
         try {
@@ -46,8 +64,8 @@ if (-not $PythonCmd) {
     }
     
     if (-not $PythonCmd) {
-        Write-Host "[ERROR] Python 3 installation could not be completed." -ForegroundColor Red
-        Write-Host "Please install Python 3 manually from https://www.python.org/downloads/ (check 'Add Python to PATH') and rerun this installer." -ForegroundColor Yellow
+        Write-Host "[ERROR] Python 3.9+ installation could not be completed." -ForegroundColor Red
+        Write-Host "Please install Python 3.9+ manually from https://www.python.org/downloads/ (check 'Add Python to PATH') and rerun this installer." -ForegroundColor Yellow
         if (Test-Path $InstallDir) { Remove-Item -Path $InstallDir -Recurse -Force -ErrorAction SilentlyContinue }
         exit 1
     }
