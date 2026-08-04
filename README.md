@@ -1,18 +1,18 @@
 # NVIDIA NIM API Key Proxy & Manager 🚀
 
-A high-performance, low-latency API proxy server designed to manage and automatically rotate **multiple NVIDIA NIM API Keys**. Features native dual-protocol compatibility: **OpenAI Compatible** (`/v1/chat/completions`) and **Anthropic Compatible** (`/v1/messages`) for seamless integration with **Claude Code**, Cursor, LibreChat, and custom AI SDKs.
+A high-performance, low-latency API proxy server designed to manage and automatically rotate **multiple NVIDIA NIM API Keys**. Features native dual-protocol compatibility: **OpenAI Compatible** (`/v1/chat/completions`) and **Anthropic Compatible** (`/v1/messages`) for seamless integration with **Claude Code**, **OpenCode**, **Codex**, Cursor, LibreChat, and custom AI SDKs.
 
 ---
 
 ### ✨ Features & Key Highlights
 
 - 🔄 **Automatic & Transparent Failover (HTTP 429)**: If an API key hits a rate limit (HTTP 429), the proxy sets `is_rate_limited=True`, automatically rotates to the next available key, and serves the request seamlessly without client-side errors.
-- 🎯 **Adaptive Exponential Backoff Probing (30s ➔ 60s ➔ 120s)**: Probes rate-limited keys using adaptive exponential backoff to minimize network overhead. As soon as HTTP 200 is returned, the key is immediately restored to active service.
+- 🎯 **Adaptive Progressive Probing (30s ➔ 1h Max Cap)**: Probes rate-limited keys using progressive backoff steps (30s ➔ 60s ➔ 120s ➔ 300s ➔ 900s ➔ 1800s ➔ 3600s max). As soon as HTTP 200 is returned, the key is immediately restored to active service.
 - 📊 **Real-Time Terminal Dashboard (`nimproxy stats`)**: Interactive live terminal dashboard with 1000ms polling showing live token metrics, served requests, and key pool status. Press `q` anytime to return to terminal.
+- 🔌 **Export & Auto-Configuration for AI Tools (`nimproxy export`)**: One-click configuration for **OpenCode** (`~/.opencode/config.json`), **Claude Code** (`~/.claude/settings.json`), and **Codex / Cursor** OpenAI compatible clients.
 - 🎛️ **Quick CLI Commands (`nimproxy model` & `nimproxy key`)**: Instantly switch active models or add/remove API keys on the fly without running full setup.
 - 🛡️ **Invalid Key Protection (HTTP 401/403)**: If an invalid or unauthorized key is detected, it is marked as `is_invalid=True` and discarded for the rest of the current server session.
 - 🧹 **Automatic Log Retention**: Automatically limits session logs to a maximum of 20 log files and 30 days of retention.
-- 🤖 **One-Click Claude Code Integration**: Automatically configures `~/.claude/settings.json` during setup or via `nimproxy claude`.
 - ⚡ **High-Range Default Port (`43100`)**: Runs on port `43100` by default to avoid port collisions with common web development servers.
 
 ---
@@ -32,6 +32,9 @@ This installs `nimproxy` in `%APPDATA%\nimproxy`, adds `nimproxy` to your `PATH`
 
 ```bash
 nimproxy                  # Display server status report or auto-start background process
+nimproxy export opencode  # Automatically configure OpenCode (~/.opencode/config.json)
+nimproxy export codex     # Display OpenAI compatible settings for Codex / Cursor
+nimproxy export claude    # Automatically configure Claude Code (~/.claude/settings.json)
 nimproxy stats            # Launch real-time live stats dashboard (1000ms polling, 'q' to exit)
 nimproxy model            # List available models or view active model
 nimproxy model set <name> # Switch active model instantly (e.g. meta/llama-3.3-70b-instruct)
@@ -39,7 +42,7 @@ nimproxy key list         # List all configured API keys
 nimproxy key add <key>    # Add a new API key to failover pool
 nimproxy key remove <key> # Remove an API key from pool
 nimproxy setup            # Run interactive guided setup wizard
-nimproxy claude           # Automatically configure Claude Code (~/.claude/settings.json)
+nimproxy claude           # Shortcut to configure Claude Code
 nimproxy stop             # Stop background server process
 nimproxy restart          # Restart background server process
 nimproxy update           # Check GitHub releases for updates
@@ -48,23 +51,30 @@ nimproxy version          # Display version
 
 ---
 
-### 🤖 Integration with Claude Code
+### 🤖 Integrating with AI Coding Tools
 
-Simply run:
+#### 1. OpenCode
+Run:
+```bash
+nimproxy export opencode
+```
+
+#### 2. Claude Code
+Run:
 ```bash
 nimproxy claude
 ```
 
-Or manually configure `~/.claude/settings.json` (or `C:\Users\<YourUser>\.claude\settings.json`):
+#### 3. Codex / Cursor / Custom OpenAI SDKs
+Run:
+```bash
+nimproxy export codex
+```
 
-```json
-{
-  "env": {
-    "ANTHROPIC_BASE_URL": "http://localhost:43100",
-    "ANTHROPIC_AUTH_TOKEN": "your-PROXY_API_KEY-here",
-    "ANTHROPIC_MODEL": "z-ai/glm-5.2"
-  }
-}
+```env
+OPENAI_BASE_URL=http://localhost:43100/v1
+OPENAI_API_KEY=your-PROXY_API_KEY-here
+MODEL=z-ai/glm-5.2
 ```
 
 ---
