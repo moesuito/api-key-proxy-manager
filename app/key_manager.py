@@ -60,10 +60,10 @@ def _build_probe_payload() -> Dict:
     }
 
 
-async def probe_key_task(key_info: KeyInfo, base_url: str, interval: int, key_manager_ref):
+async def probe_key_task(key_info: KeyInfo, base_url: str, initial_interval: int, key_manager_ref):
     """
-    Silently probes a rate-limited key specifically for the target model every `interval` seconds.
-    As soon as HTTP 200 is returned, resets is_rate_limited to False.
+    Silently probes a rate-limited key with adaptive exponential backoff (30s -> 60s -> 120s max).
+    As soon as HTTP 200 is returned, resets interval back to initial state and sets is_rate_limited to False.
     """
     key_info.probe_in_progress = True
     masked = key_info.masked_key
@@ -75,9 +75,12 @@ async def probe_key_task(key_info: KeyInfo, base_url: str, interval: int, key_ma
     }
     payload = _build_probe_payload()
 
+    current_interval = initial_interval
+    max_interval = 120  # Backoff cap in seconds
+
     try:
         while key_info.is_rate_limited and not key_info.is_invalid:
-            await asyncio.sleep(interval)
+            await asyncio.sleep(current_interval)
             key_info.last_probe_time = time.time()
 
             async with httpx.AsyncClient(timeout=10.0) as client:
@@ -89,11 +92,14 @@ async def probe_key_task(key_info: KeyInfo, base_url: str, interval: int, key_ma
                             f"[KeyManager] Key {masked} is back online (HTTP 200 OK) for model {settings.DEFAULT_MODEL}. Rate limit cleared!"
                         )
                         break
+                    elif resp.status_code == 429:
+                        # Exponential backoff on consecutive 429 errors
+                        current_interval = min(current_interval * 2, max_interval)
                     elif resp.status_code in (401, 403):
                         key_manager_ref.mark_invalid(key_info.key, f"HTTP {resp.status_code} during probe")
                         break
                 except Exception:
-                    pass
+                    current_interval = min(current_interval * 2, max_interval)
     finally:
         key_info.probe_in_progress = False
 
