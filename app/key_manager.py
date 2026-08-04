@@ -12,8 +12,8 @@ class AllKeysExhaustedException(Exception):
     def __init__(self, retry_after: float):
         self.retry_after = retry_after
         super().__init__(
-            f"Todas as API Keys ativas estão em Rate Limit (HTTP 429) no modelo {settings.DEFAULT_MODEL}! "
-            f"Sondagens em andamento a cada {settings.PROBE_INTERVAL_SECONDS}s."
+            f"All active API keys are rate limited (HTTP 429) for model {settings.DEFAULT_MODEL}! "
+            f"Background probes active every {settings.PROBE_INTERVAL_SECONDS}s."
         )
 
 
@@ -51,7 +51,7 @@ class KeyInfo:
 
 
 def _build_probe_payload() -> Dict:
-    """Payload de 1 token extremamente leve para testar o modelo específico."""
+    """Lightweight 1-token payload specifically testing the configured model."""
     return {
         "model": settings.DEFAULT_MODEL,
         "messages": [{"role": "user", "content": "hi"}],
@@ -62,8 +62,8 @@ def _build_probe_payload() -> Dict:
 
 async def probe_key_task(key_info: KeyInfo, base_url: str, interval: int, key_manager_ref):
     """
-    Sonda silenciosamente a chave em Rate Limit especificamente para o modelo configurado (ex: z-ai/glm-5.2).
-    Assim que retornar 200, altera is_rate_limited para False.
+    Silently probes a rate-limited key specifically for the target model every `interval` seconds.
+    As soon as HTTP 200 is returned, resets is_rate_limited to False.
     """
     key_info.probe_in_progress = True
     masked = key_info.masked_key
@@ -86,11 +86,11 @@ async def probe_key_task(key_info: KeyInfo, base_url: str, interval: int, key_ma
                     if resp.status_code == 200:
                         key_info.is_rate_limited = False
                         logger.info(
-                            f"[KeyManager] Key {masked} voltou a responder HTTP 200 OK para o modelo {settings.DEFAULT_MODEL}. Saiu do Rate Limit!"
+                            f"[KeyManager] Key {masked} is back online (HTTP 200 OK) for model {settings.DEFAULT_MODEL}. Rate limit cleared!"
                         )
                         break
                     elif resp.status_code in (401, 403):
-                        key_manager_ref.mark_invalid(key_info.key, f"HTTP {resp.status_code} na sondagem")
+                        key_manager_ref.mark_invalid(key_info.key, f"HTTP {resp.status_code} during probe")
                         break
                 except Exception:
                     pass
@@ -110,17 +110,17 @@ class KeyManager:
         with self._lock:
             self._keys = [KeyInfo(k) for k in keys if k]
             self._current_index = 0
-            logger.info(f"[KeyManager] Inicializado com {len(self._keys)} API Key(s).")
+            logger.info(f"[KeyManager] Initialized with {len(self._keys)} API Key(s).")
 
     def get_next_key(self) -> str:
         with self._lock:
             if not self._keys:
-                raise ValueError("Nenhuma NVIDIA API Key foi configurada no sistema (.env).")
+                raise ValueError("No NVIDIA API Key configured in system (.env).")
 
             valid_keys = [k for k in self._keys if not k.is_invalid]
             if not valid_keys:
-                logger.error("[KeyManager] TODAS AS KEYS FORAM DESCARTADAS POR SEREM INVÁLIDAS / NÃO AUTORIZADAS (401/403).")
-                raise AllKeysInvalidException("Todas as API Keys configuradas são inválidas ou incompatíveis.")
+                logger.error("[KeyManager] ALL KEYS DISCARDED AS INVALID / UNAUTHORIZED (401/403).")
+                raise AllKeysInvalidException("All configured API Keys are invalid or unauthorized.")
 
             num_keys = len(self._keys)
             for _ in range(num_keys):
@@ -132,8 +132,8 @@ class KeyManager:
                     return candidate.key
 
             logger.error(
-                f"[KeyManager] TODAS AS KEYS VÁLIDAS ESTÃO EM RATE LIMIT (429) PARA {settings.DEFAULT_MODEL}! "
-                f"Sondagens ativas a cada {settings.PROBE_INTERVAL_SECONDS}s em andamento."
+                f"[KeyManager] ALL VALID KEYS ARE RATE LIMITED (429) FOR {settings.DEFAULT_MODEL}! "
+                f"Active probing every {settings.PROBE_INTERVAL_SECONDS}s in progress."
             )
             raise AllKeysExhaustedException(retry_after=float(settings.PROBE_INTERVAL_SECONDS))
 
@@ -146,7 +146,7 @@ class KeyManager:
                     k.last_429_time = now
                     k.rate_limit_429_count += 1
                     logger.warning(
-                        f"[KeyManager] Key {k.masked_key} recebeu HTTP 429 para {settings.DEFAULT_MODEL}. Rotacionando automaticamente..."
+                        f"[KeyManager] Key {k.masked_key} received HTTP 429 for {settings.DEFAULT_MODEL}. Auto-rotating to next key..."
                     )
                     if not k.probe_in_progress:
                         try:
@@ -156,7 +156,7 @@ class KeyManager:
                             pass
                     break
 
-    def mark_invalid(self, key: str, reason: str = "Key inválida/incompatível"):
+    def mark_invalid(self, key: str, reason: str = "Invalid/unauthorized key"):
         with self._lock:
             for k in self._keys:
                 if k.key == key:
@@ -164,8 +164,8 @@ class KeyManager:
                     k.invalid_reason = reason
                     active_count = sum(1 for x in self._keys if not x.is_invalid and not x.is_rate_limited)
                     logger.error(
-                        f"[KeyManager] SEGURANÇA: Key {k.masked_key} é INVÁLIDA/INCOMPATÍVEL ({reason}). "
-                        f"Descartada para esta sessão! Chaves ativas restantes: {active_count}/{len(self._keys)}"
+                        f"[KeyManager] SECURITY: Key {k.masked_key} is INVALID/UNAUTHORIZED ({reason}). "
+                        f"Discarded for current session! Active keys remaining: {active_count}/{len(self._keys)}"
                     )
                     break
 
@@ -204,15 +204,14 @@ key_manager = KeyManager(settings.NVIDIA_API_KEYS)
 
 async def verify_keys_on_startup(base_url: str):
     """
-    Testa todas as chaves no startup do servidor diretamente contra o modelo configurado (z-ai/glm-5.2)
-    usando um teste ultra-leve de 1 token para validar rate-limit exato por modelo.
+    Probes all keys during server startup against configured model (z-ai/glm-5.2) using an ultra-lightweight 1-token test.
     """
     keys = key_manager._keys
     if not keys:
-        logger.warning("[StartupCheck] Nenhuma chave configurada para testar.")
+        logger.warning("[StartupCheck] No keys configured to test.")
         return
 
-    logger.info(f"VERIFICAÇÃO DE INICIALIZAÇÃO DAS KEYS (Modelo: {settings.DEFAULT_MODEL}):")
+    logger.info(f"STARTUP API KEYS VERIFICATION (Model: {settings.DEFAULT_MODEL}):")
     url = f"{base_url}/chat/completions"
     payload = _build_probe_payload()
 
@@ -227,10 +226,10 @@ async def verify_keys_on_startup(base_url: str):
                 if resp.status_code == 200:
                     k.is_rate_limited = False
                     k.is_invalid = False
-                    logger.info(f"   [OK] Key {k.masked_key} -> ATIVA E PRONTA PARA {settings.DEFAULT_MODEL} (HTTP 200)")
+                    logger.info(f"   [OK] Key {k.masked_key} -> ACTIVE & READY FOR {settings.DEFAULT_MODEL} (HTTP 200)")
                 elif resp.status_code == 429:
                     k.is_rate_limited = True
-                    logger.warning(f"   [WARNING] Key {k.masked_key} -> RATE LIMITED (HTTP 429) no modelo {settings.DEFAULT_MODEL} - Sondagem ativa agendada")
+                    logger.warning(f"   [WARNING] Key {k.masked_key} -> RATE LIMITED (HTTP 429) for model {settings.DEFAULT_MODEL} - Background probe scheduled")
                     if not k.probe_in_progress:
                         try:
                             loop = asyncio.get_running_loop()
@@ -240,11 +239,11 @@ async def verify_keys_on_startup(base_url: str):
                 elif resp.status_code in (401, 403):
                     k.is_invalid = True
                     k.invalid_reason = f"HTTP {resp.status_code}"
-                    logger.error(f"   [ERRO] Key {k.masked_key} -> INVÁLIDA/NÃO AUTORIZADA (HTTP {resp.status_code}) - Descartada")
+                    logger.error(f"   [ERROR] Key {k.masked_key} -> INVALID/UNAUTHORIZED (HTTP {resp.status_code}) - Discarded")
                 else:
-                    logger.warning(f"   [?] Key {k.masked_key} -> Respondeu status {resp.status_code}")
+                    logger.warning(f"   [?] Key {k.masked_key} -> Responded with status {resp.status_code}")
             except Exception as exc:
-                logger.error(f"   [ERRO] Key {k.masked_key} -> Falha de conexão no teste inicial: {exc}")
+                logger.error(f"   [ERROR] Key {k.masked_key} -> Connection failure during startup test: {exc}")
 
     status = key_manager.get_status()
-    logger.info(f"   STATUS FINAL: {status['active_keys']}/{status['total_keys']} Keys Ativas e Prontas para Uso!")
+    logger.info(f"   FINAL STATUS: {status['active_keys']}/{status['total_keys']} Keys Active & Ready for Use!")

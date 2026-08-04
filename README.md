@@ -1,52 +1,52 @@
 # NVIDIA NIM API Key Proxy & Manager 🚀
 
-Um servidor proxy de alta performance e baixa latência projetado para gerenciar e rotacionar automaticamente **múltiplas API Keys da NVIDIA NIM**. Oferece interface com dupla compatibilidade nativa: **OpenAI Compatible** (`/v1/chat/completions`) e **Anthropic Compatible** (`/v1/messages`) para integração perfeita com o **Claude Code**, Cursor, LibreChat e SDKs de IA.
+A high-performance, low-latency API proxy server designed to manage and automatically rotate **multiple NVIDIA NIM API Keys**. Features native dual-protocol compatibility: **OpenAI Compatible** (`/v1/chat/completions`) and **Anthropic Compatible** (`/v1/messages`) for seamless integration with **Claude Code**, Cursor, LibreChat, and custom AI SDKs.
 
 ---
 
-### ✨ Destaques & Funcionalidades
+### ✨ Features & Key Highlights
 
-- 🔄 **Rotação Automática Silenciosa (HTTP 429)**: Se uma chave atingir o Rate Limit (429), o proxy altera a flag `is_rate_limited=True`, faz o failover automático para a próxima chave disponível e atende a requisição sem erros para o usuário.
-- 🎯 **Sondagem Ativa por Modelo (Probe a cada 30s)**: Quando uma chave entra em Rate Limit, o sistema sonda o modelo específico (`z-ai/glm-5.2`) em background a cada 30s com um teste ultra-leve de 1 token. Assim que retornar `HTTP 200`, a chave é reativada instantaneamente.
-- 🛡️ **Segurança contra Keys Inválidas (HTTP 401/403)**: Se uma chave inválida ou não autorizada for detectada, ela é marcada como `is_invalid=True` e descartada automaticamente durante a sessão atual.
-- 🔐 **Autenticação Proxy (`PROXY_API_KEY`)**: Gera e salva automaticamente uma chave mestre fixa no `.env` para proteger seus endpoints.
-- ⚡ **Pool de Conexões HTTP Reutilizáveis (Keep-Alive)**: Reutilização de conexões TCP e TLS handshakes com a NVIDIA NIM, garantindo respostas rápidas em streaming.
-- 📝 **Logging por Sessão em Tempo Real**: Gera um arquivo de log único por sessão em `logs/` registrando consumo de tokens (prompt, completion, total) e eventos de rotação sem spam.
+- 🔄 **Automatic & Transparent Failover (HTTP 429)**: If an API key hits a rate limit (HTTP 429), the proxy sets `is_rate_limited=True`, automatically rotates to the next available key, and serves the request seamlessly without client-side errors.
+- 🎯 **Active Model-Specific Probing (Every 30s)**: When a key enters Rate Limit state, a silent background task probes the target model (`z-ai/glm-5.2`) every 30s using an ultra-lightweight 1-token request. As soon as HTTP 200 is returned, the key is immediately restored to active service.
+- 🛡️ **Invalid Key Protection (HTTP 401/403)**: If an invalid or unauthorized key is detected, it is marked as `is_invalid=True` and discarded for the rest of the current server session.
+- 🔐 **Proxy Authentication (`PROXY_API_KEY`)**: Automatically generates and saves a fixed master key in `.env` to secure your proxy endpoints.
+- ⚡ **Persistent Connection Pooling (Keep-Alive)**: Reuses TCP sockets and TLS handshakes with NVIDIA NIM for near-instant streaming response start times.
+- 📝 **Real-Time Per-Session Logging**: Generates session log files in `logs/` tracking token consumption (prompt, completion, total) and key rotation events without log spam.
 
 ---
 
-### ⚙️ Configuração (`.env`)
+### ⚙️ Configuration (`.env`)
 
-Edite ou crie o arquivo `.env` na raiz do projeto (veja o `.env.example` para referência):
+Create or edit `.env` in the project root directory (refer to `.env.example`):
 
 ```env
-# Insira suas chaves em linhas individuais (numeradas):
-NVIDIA_API_KEY_1=nvapi-sua-chave-1
-NVIDIA_API_KEY_2=nvapi-sua-chave-2
-NVIDIA_API_KEY_3=nvapi-sua-chave-3
+# Register API Keys in individual lines (numbered):
+NVIDIA_API_KEY_1=nvapi-your-key-1
+NVIDIA_API_KEY_2=nvapi-your-key-2
+NVIDIA_API_KEY_3=nvapi-your-key-3
 
-# Modelo Padrão fixo
+# Fixed Default Model
 DEFAULT_MODEL=z-ai/glm-5.2
 
-# URL Base da NVIDIA NIM API
+# NVIDIA NIM Base URL
 NVIDIA_BASE_URL=https://integrate.api.nvidia.com/v1
 
-# Intervalo em segundos para sondar chaves em Rate Limit
+# Probe interval in seconds for rate-limited keys
 PROBE_INTERVAL_SECONDS=30
 
 HOST=0.0.0.0
 PORT=8000
 
-# Chave de autenticação do seu servidor Proxy (gerada automaticamente na 1ª execução)
+# Fixed Proxy Master API Key (auto-generated on first launch)
 PROXY_API_KEY=sk-nim-...
 ```
 
 ---
 
-### 🚀 Como Executar
+### 🚀 How to Run
 
-#### Windows (com script executável):
-Dê dois cliques no arquivo **`start.bat`**.
+#### Windows (using batch script):
+Double click **`start.bat`**.
 
 #### Terminal (manual):
 ```bash
@@ -57,15 +57,15 @@ python -m venv .venv
 
 ---
 
-### 🤖 Integração com o Claude Code
+### 🤖 Integration with Claude Code
 
-Configure o arquivo `~/.claude/settings.json` (ou `C:\Users\<SeuUsuario>\.claude\settings.json`):
+Configure `~/.claude/settings.json` (or `C:\Users\<YourUser>\.claude\settings.json`):
 
 ```json
 {
   "env": {
     "ANTHROPIC_BASE_URL": "http://localhost:8000",
-    "ANTHROPIC_AUTH_TOKEN": "sua-PROXY_API_KEY-aqui",
+    "ANTHROPIC_AUTH_TOKEN": "your-PROXY_API_KEY-here",
     "ANTHROPIC_MODEL": "z-ai/glm-5.2",
     "CLAUDE_CODE_MAX_CONTEXT_TOKENS": "1000000"
   }
@@ -74,19 +74,19 @@ Configure o arquivo `~/.claude/settings.json` (ou `C:\Users\<SeuUsuario>\.claude
 
 ---
 
-### 📡 Endpoints Disponíveis
+### 📡 API Endpoints
 
-| Endpoint | Método | Descrição |
+| Endpoint | Method | Description |
 | :--- | :--- | :--- |
-| `POST /v1/chat/completions` | `POST` | Endpoint nativo compatível com a API da OpenAI. |
-| `POST /v1/messages` | `POST` | Endpoint compatível com a API da Anthropic (usado pelo Claude Code). |
-| `GET /v1/models` | `GET` | Retorna a lista de modelos disponíveis (compatível OpenAI). |
-| `GET /health` | `GET` | Retorna o status do proxy e estatísticas de uso de cada chave. |
-| `GET /api/hello` | `GET/HEAD` | Endpoint de ping rápido/healthcheck para o Claude Code. |
+| `POST /v1/chat/completions` | `POST` | Native OpenAI compatible chat completions endpoint. |
+| `POST /v1/messages` | `POST` | Anthropic compatible messages endpoint (used by Claude Code). |
+| `GET /v1/models` | `GET` | Returns available models list (OpenAI compatible). |
+| `GET /health` | `GET` | Returns proxy health status and key metrics. |
+| `GET /api/hello` | `GET/HEAD` | Fast health check endpoint queried by Claude Code on startup. |
 
 ---
 
-### 🧪 Executar Testes
+### 🧪 Running Tests
 
 ```bash
 .\.venv\Scripts\python.exe -m pytest tests/

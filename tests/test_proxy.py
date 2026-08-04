@@ -25,19 +25,18 @@ def test_v1_models_endpoint():
 
 
 def test_unauthorized_access():
-    """Testa se o proxy bloqueia requisições sem PROXY_API_KEY com HTTP 401."""
+    """Tests if proxy blocks unauthenticated requests with HTTP 401."""
     res_openai = client.post("/v1/chat/completions", json={"messages": []})
     assert res_openai.status_code == 401
-    assert "Proxy incorreta" in res_openai.json()["error"]["message"]
+    assert "Proxy" in res_openai.json()["error"]["message"]
 
     res_anthropic = client.post("/v1/messages", json={"messages": []})
     assert res_anthropic.status_code == 401
-    assert "Proxy incorreta" in res_anthropic.json()["error"]["message"]
+    assert "Proxy" in res_anthropic.json()["error"]["message"]
 
 
 def test_authorized_access_header():
-    """Testa se com o header correto a autenticação passa (mesmo que a payload falhe depois)."""
+    """Tests if valid authorization header passes proxy authentication."""
     headers = {"Authorization": f"Bearer {settings.PROXY_API_KEY}"}
     res = client.post("/v1/chat/completions", json={"messages": []}, headers=headers)
-    # Não deve dar 401 de autenticação do proxy
-    assert res.status_code != 401 or "Proxy incorreta" not in res.json().get("error", {}).get("message", "")
+    assert res.status_code != 401 or "Invalid or missing Proxy API Key" not in res.json().get("error", {}).get("message", "")

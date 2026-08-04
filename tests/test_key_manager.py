@@ -34,10 +34,9 @@ def test_key_manager_failover_is_rate_limited():
 
 
 def test_key_manager_invalid_key_discard():
-    """Testa se uma chave marcada como inválida é descartada para a sessão."""
+    """Tests if a key marked as invalid is discarded for the current session."""
     km = KeyManager(["nvapi-key1", "nvapi-key2"])
     
-    # Marca key1 como inválida (401/403)
     km.mark_invalid("nvapi-key1", "HTTP 401 Unauthorized")
     
     status = km.get_status()
@@ -45,7 +44,6 @@ def test_key_manager_invalid_key_discard():
     assert status["active_keys"] == 1
     assert status["keys"][0]["status"] == "invalid"
 
-    # A próxima chamada deve ignorar a key1 e usar key2
     assert km.get_next_key() == "nvapi-key2"
     assert km.get_next_key() == "nvapi-key2"
 
@@ -55,15 +53,14 @@ def test_all_keys_invalid_exception():
     km.mark_invalid("nvapi-key1", "HTTP 401")
     km.mark_invalid("nvapi-key2", "HTTP 401")
 
-    # Ambas inválidas -> deve disparar AllKeysInvalidException
     with pytest.raises(AllKeysInvalidException) as exc_info:
         km.get_next_key()
 
-    assert "todas" in str(exc_info.value).lower() or "invalid" in str(exc_info.value).lower()
+    assert "invalid" in str(exc_info.value).lower() or "unauthorized" in str(exc_info.value).lower()
 
 
 def test_probe_reactivation(monkeypatch):
-    """Testa se a chave reativa (is_rate_limited=False) quando o probe recebe HTTP 200."""
+    """Tests if key reactivates (is_rate_limited=False) when probe receives HTTP 200."""
     km = KeyManager(["nvapi-key1"])
     key_info = km._keys[0]
     km.mark_429("nvapi-key1")
@@ -80,7 +77,7 @@ def test_probe_reactivation(monkeypatch):
             return self
         async def __aexit__(self, exc_type, exc_val, exc_tb):
             pass
-        async def get(self, url, headers=None):
+        async def post(self, url, json=None, headers=None):
             return MockResponse()
 
     monkeypatch.setattr("httpx.AsyncClient", MockAsyncClient)

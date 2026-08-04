@@ -13,8 +13,8 @@ from app.nim_client import send_request_with_failover, stream_openai_response, s
 
 def verify_proxy_auth(request: Request) -> bool:
     """
-    Verifica se a requisição enviou a PROXY_API_KEY correta.
-    Aceita no header 'Authorization: Bearer <KEY>' ou 'x-api-key: <KEY>'.
+    Verifies if incoming request provided valid PROXY_API_KEY.
+    Accepts header 'Authorization: Bearer <KEY>' or 'x-api-key: <KEY>'.
     """
     expected_key = settings.PROXY_API_KEY
     if not expected_key:
@@ -40,13 +40,13 @@ async def lifespan(app: FastAPI):
     host_url = f"http://localhost:{settings.PORT}"
     
     logger.info("=" * 65)
-    logger.info(f" NVIDIA NIM API PROXY INICIADO SUCESSO")
-    logger.info(f" PROXY_API_KEY FIXA : {settings.PROXY_API_KEY}")
-    logger.info(f" MODELO PADRÃO     : {settings.DEFAULT_MODEL}")
-    logger.info(f" ENDPOINT OPENAI   : {host_url}/v1")
-    logger.info(f" ENDPOINT ANTHROPIC: {host_url}")
+    logger.info(f" NVIDIA NIM API PROXY STARTED SUCCESSFULLY")
+    logger.info(f" PROXY MASTER KEY : {settings.PROXY_API_KEY}")
+    logger.info(f" DEFAULT MODEL    : {settings.DEFAULT_MODEL}")
+    logger.info(f" OPENAI ENDPOINT  : {host_url}/v1")
+    logger.info(f" ANTHROPIC ENDPOINT: {host_url}")
     logger.info("-----------------------------------------------------------------")
-    # Testa e valida todas as chaves cadastradas na inicialização
+    # Verify and validate all configured keys on startup
     await verify_keys_on_startup(settings.NVIDIA_BASE_URL)
     logger.info("=" * 65)
     yield
@@ -54,7 +54,7 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(
     title="NVIDIA NIM API Key Proxy",
-    description="Proxy OpenAI & Anthropic Compatible com Autenticação e Rotação Automática de Keys",
+    description="OpenAI & Anthropic Compatible Proxy with Authentication & Automatic Key Rotation",
     version="1.0.0",
     lifespan=lifespan
 )
@@ -70,13 +70,13 @@ app.add_middleware(
 
 @app.api_route("/api/hello", methods=["GET", "HEAD"])
 async def api_hello():
-    """Endpoint de ping/healthcheck consultado pelo Claude Code na inicialização."""
+    """Ping/healthcheck endpoint queried by Claude Code on startup."""
     return {"status": "ok", "service": "nvidia-nim-proxy"}
 
 
 @app.get("/health")
 async def health_check():
-    """Endpoint de status e métricas de uso das API Keys."""
+    """Health check and key usage metrics endpoint."""
     status = key_manager.get_status()
     return {
         "status": "online",
@@ -88,7 +88,7 @@ async def health_check():
 
 @app.get("/v1/models")
 async def list_models():
-    """Endpoint no padrão OpenAI para listar os modelos disponíveis."""
+    """OpenAI compatible list models endpoint."""
     return {
         "object": "list",
         "data": [
@@ -105,15 +105,15 @@ async def list_models():
 @app.post("/v1/chat/completions")
 async def openai_chat_completions(request: Request):
     """
-    Endpoint compatível com OpenAI (POST /v1/chat/completions).
+    OpenAI compatible chat completions endpoint (POST /v1/chat/completions).
     """
     if not verify_proxy_auth(request):
-        logger.warning("[Auth] Acesso negado em /v1/chat/completions: PROXY_API_KEY incorreta ou ausente.")
+        logger.warning("[Auth] Access denied on /v1/chat/completions: Invalid or missing PROXY_API_KEY.")
         return JSONResponse(
             status_code=401,
             content={
                 "error": {
-                    "message": "API Key do Proxy incorreta ou ausente. Forneça a PROXY_API_KEY no header Authorization.",
+                    "message": "Invalid or missing Proxy API Key. Provide PROXY_API_KEY in Authorization header.",
                     "type": "authentication_error",
                     "code": 401
                 }
@@ -144,15 +144,15 @@ async def openai_chat_completions(request: Request):
 @app.post("/v1/messages")
 async def anthropic_messages(request: Request):
     """
-    Endpoint compatível com Anthropic (POST /v1/messages) para uso no Claude Code.
+    Anthropic compatible messages endpoint (POST /v1/messages) for Claude Code.
     """
     if not verify_proxy_auth(request):
-        logger.warning("[Auth] Acesso negado em /v1/messages: PROXY_API_KEY incorreta ou ausente.")
+        logger.warning("[Auth] Access denied on /v1/messages: Invalid or missing PROXY_API_KEY.")
         return JSONResponse(
             status_code=401,
             content={
                 "error": {
-                    "message": "API Key do Proxy incorreta ou ausente. Forneça a PROXY_API_KEY no header x-api-key ou Authorization.",
+                    "message": "Invalid or missing Proxy API Key. Provide PROXY_API_KEY in x-api-key or Authorization header.",
                     "type": "authentication_error",
                     "code": 401
                 }
@@ -164,7 +164,7 @@ async def anthropic_messages(request: Request):
     except Exception:
         anthropic_body = {}
 
-    logger.info(f"[AnthropicEndpoint] Recebida requisição autenticada do Claude Code / cliente Anthropic")
+    logger.info(f"[AnthropicEndpoint] Authenticated request received from Claude Code / Anthropic client")
 
     openai_body = anthropic_request_to_openai(anthropic_body, settings.DEFAULT_MODEL)
     is_stream = anthropic_body.get("stream", False)

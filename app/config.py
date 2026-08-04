@@ -4,7 +4,7 @@ import secrets
 from typing import List
 from dotenv import load_dotenv
 
-# Carrega variáveis de ambiente do .env se existir
+# Load environment variables from .env file if present
 load_dotenv()
 
 
@@ -19,22 +19,22 @@ class Settings:
 
         key = os.getenv("PROXY_API_KEY", "").strip()
         if not key:
-            # Gera uma chave segura para o proxy (ex: sk-nim-a1b2c3d4e5f6...)
+            # Generate a secure master key for the proxy
             key = f"sk-nim-{secrets.token_hex(16)}"
             self._proxy_api_key = key
 
-            # Escreve a nova chave gerada no arquivo .env
+            # Append the generated key to .env file for persistence
             env_path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), ".env")
             try:
                 if os.path.exists(env_path):
                     with open(env_path, "a", encoding="utf-8") as f:
-                        f.write(f"\n# API Key de Autenticação do Proxy (gerada automaticamente)\nPROXY_API_KEY={key}\n")
+                        f.write(f"\n# Auto-generated Proxy Master API Key\nPROXY_API_KEY={key}\n")
                 else:
                     with open(env_path, "w", encoding="utf-8") as f:
                         f.write(f"PROXY_API_KEY={key}\n")
-                print(f"[Config] Nova Proxy API Key gerada e gravada no .env: {key}")
+                print(f"[Config] Generated new PROXY_API_KEY saved to .env: {key}")
             except Exception as e:
-                print(f"[Config] Aviso: Não foi possível gravar PROXY_API_KEY no .env: {e}")
+                print(f"[Config] Warning: Failed to write PROXY_API_KEY to .env: {e}")
         else:
             self._proxy_api_key = key
 
@@ -44,14 +44,14 @@ class Settings:
     def NVIDIA_API_KEYS(self) -> List[str]:
         keys = []
 
-        # 1. Procura por variáveis individuais como NVIDIA_API_KEY_1, NVIDIA_API_KEY_2, etc.
+        # 1. Search for individual numbered environment variables (NVIDIA_API_KEY_1, NVIDIA_API_KEY_2, etc.)
         env_vars = sorted([var for var in os.environ if var.startswith("NVIDIA_API_KEY_")])
         for var in env_vars:
             val = os.getenv(var, "").strip()
             if val and val not in keys:
                 keys.append(val)
 
-        # 2. Procura por NVIDIA_API_KEYS (suporta múltiplas linhas \n ou separadas por vírgula)
+        # 2. Search for NVIDIA_API_KEYS (supports multiline or comma-separated keys)
         raw_keys_str = os.getenv("NVIDIA_API_KEYS", "")
         if raw_keys_str:
             split_keys = [k.strip() for k in re.split(r"[\n,\r]+", raw_keys_str) if k.strip()]
@@ -59,7 +59,7 @@ class Settings:
                 if k not in keys:
                     keys.append(k)
 
-        # 3. Suporte a NVIDIA_API_KEY única
+        # 3. Single NVIDIA_API_KEY support
         single_key = os.getenv("NVIDIA_API_KEY")
         if single_key and single_key.strip() and single_key.strip() not in keys:
             keys.append(single_key.strip())

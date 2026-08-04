@@ -5,11 +5,11 @@ from typing import Dict, Any, List, Generator
 
 def anthropic_request_to_openai(anthropic_body: Dict[str, Any], default_model: str) -> Dict[str, Any]:
     """
-    Converte uma requisição no formato Anthropic (/v1/messages) para o formato OpenAI (/v1/chat/completions).
+    Converts a request in Anthropic format (/v1/messages) to OpenAI format (/v1/chat/completions).
     """
     openai_messages = []
 
-    # 1. Trata o System Prompt
+    # 1. Handle System Prompt
     system_field = anthropic_body.get("system")
     if system_field:
         if isinstance(system_field, str):
@@ -24,7 +24,7 @@ def anthropic_request_to_openai(anthropic_body: Dict[str, Any], default_model: s
             if system_texts:
                 openai_messages.append({"role": "system", "content": "\n".join(system_texts)})
 
-    # 2. Converte as mensagens
+    # 2. Convert Messages
     raw_messages = anthropic_body.get("messages", [])
     for msg in raw_messages:
         role = msg.get("role", "user")
@@ -45,7 +45,7 @@ def anthropic_request_to_openai(anthropic_body: Dict[str, Any], default_model: s
                 if block_type == "text":
                     text_parts.append(block.get("text", ""))
                 elif block_type == "tool_use":
-                    # Chamada de ferramenta feita pelo modelo
+                    # Tool call made by model
                     tool_calls.append({
                         "id": block.get("id", f"toolu_{uuid.uuid4().hex[:8]}"),
                         "type": "function",
@@ -55,7 +55,7 @@ def anthropic_request_to_openai(anthropic_body: Dict[str, Any], default_model: s
                         }
                     })
                 elif block_type == "tool_result":
-                    # Resultado da ferramenta retornado pelo usuário
+                    # Tool result returned by user/client
                     tr_content = block.get("content", "")
                     if isinstance(tr_content, list):
                         tr_content_str = "\n".join(
@@ -80,11 +80,11 @@ def anthropic_request_to_openai(anthropic_body: Dict[str, Any], default_model: s
             elif text_parts:
                 openai_messages.append({"role": role, "content": "\n".join(text_parts)})
 
-            # Se existiam tool_results, insere como mensagens de role="tool"
+            # Append any tool_results as tool-role messages
             for tr in tool_results:
                 openai_messages.append(tr)
 
-    # 3. Converte as ferramentas (tools)
+    # 3. Convert Tools schema
     openai_tools = None
     if "tools" in anthropic_body and isinstance(anthropic_body["tools"], list):
         openai_tools = []
@@ -98,9 +98,9 @@ def anthropic_request_to_openai(anthropic_body: Dict[str, Any], default_model: s
                 }
             })
 
-    # 4. Monta o payload final para a OpenAI / NVIDIA NIM
+    # 4. Build final OpenAI payload for NVIDIA NIM
     openai_body = {
-        "model": default_model,  # Força o modelo padrão fixo (ex: z-ai/glm-5.2)
+        "model": default_model,  # Force default fixed model (e.g. z-ai/glm-5.2)
         "messages": openai_messages,
         "stream": anthropic_body.get("stream", False)
     }
@@ -119,7 +119,7 @@ def anthropic_request_to_openai(anthropic_body: Dict[str, Any], default_model: s
 
 def openai_response_to_anthropic(openai_resp: Dict[str, Any], model_name: str) -> Dict[str, Any]:
     """
-    Converte uma resposta não-stream no formato OpenAI para o formato Anthropic.
+    Converts a non-streaming response in OpenAI format to Anthropic format.
     """
     msg_id = f"msg_{uuid.uuid4().hex[:12]}"
     choices = openai_resp.get("choices", [])
@@ -137,12 +137,12 @@ def openai_response_to_anthropic(openai_resp: Dict[str, Any], model_name: str) -
         elif finish_reason == "length":
             stop_reason = "max_tokens"
 
-        # Texto
+        # Text Content
         text_content = message.get("content")
         if text_content:
             content_blocks.append({"type": "text", "text": text_content})
 
-        # Tool calls
+        # Tool Calls
         tool_calls = message.get("tool_calls", [])
         for tc in tool_calls:
             func = tc.get("function", {})
@@ -180,5 +180,5 @@ def openai_response_to_anthropic(openai_resp: Dict[str, Any], model_name: str) -
 
 
 def format_sse(event_type: str, data_obj: Dict[str, Any]) -> str:
-    """Formata evento SSE de acordo com a especificação da Anthropic."""
+    """Formats SSE event according to Anthropic specification."""
     return f"event: {event_type}\ndata: {json.dumps(data_obj)}\n\n"

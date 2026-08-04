@@ -1,13 +1,13 @@
 @echo off
 title NVIDIA NIM API Proxy
 echo ===================================================
-echo   Iniciando NVIDIA NIM API Proxy...
+echo   Starting NVIDIA NIM API Proxy...
 echo ===================================================
 
 cd /d "%~dp0"
 
 if not exist ".venv\Scripts\python.exe" (
-    echo [ERRO] Ambiente virtual .venv nao encontrado!
+    echo [ERROR] Virtual environment .venv not found!
     pause
     exit /b 1
 )
