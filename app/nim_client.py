@@ -1,121 +1,95 @@
 import json
-import httpx
 import uuid
-from typing import AsyncGenerator, Dict, Any, Optional
-from fastapi.responses import JSONResponse
+import httpx
+from typing import Dict, Any, Tuple, Optional, AsyncGenerator
+from starlette.responses import JSONResponse
 
-from app.config import settings
-from app.key_manager import key_manager, AllKeysExhaustedException, AllKeysInvalidException
 from app.logger import logger
+from app.config import settings
+from app.key_manager import key_manager
 from app.anthropic_translator import format_sse
 
-# Shared reusable Keep-Alive HTTP client pool
+# Global HTTP AsyncClient Pool
 _shared_client: Optional[httpx.AsyncClient] = None
 
 
 def get_shared_client() -> httpx.AsyncClient:
-    """Returns the shared httpx.AsyncClient instance with reusable connection pooling."""
+    """
+    Returns a singleton HTTP AsyncClient with high-performance connection pooling.
+    Keeps TCP/TLS connections alive to NVIDIA NIM endpoints.
+    """
     global _shared_client
     if _shared_client is None or _shared_client.is_closed:
-        limits = httpx.Limits(max_keepalive_connections=50, max_connections=200, keepalive_expiry=60.0)
-        timeout = httpx.Timeout(connect=10.0, read=120.0, write=10.0, pool=10.0)
-        _shared_client = httpx.AsyncClient(limits=limits, timeout=timeout)
+        _shared_client = httpx.AsyncClient(
+            limits=httpx.Limits(
+                max_keepalive_connections=50,
+                max_connections=200,
+                keepalive_expiry=60.0
+            ),
+            timeout=httpx.Timeout(10.0, read=120.0, connect=10.0),
+            http2=False
+        )
     return _shared_client
 
 
-async def send_request_with_failover(payload: Dict[str, Any], stream: bool = False):
+async def send_request_with_failover(payload: Dict[str, Any], stream: bool = False) -> Tuple[Any, Any]:
     """
-    Sends request to NVIDIA NIM API using persistent connection pool.
-    - If key gets 429 (Rate Limit), marks key and transparently rotates to next key.
-    - If key gets 401/403 (Invalid/Unauthorized), discards key for current session and rotates.
-    - If network error occurs, retries next key.
+    Sends request to NVIDIA NIM with automatic failover on HTTP 429 (Rate Limit).
+    Tries active keys in round-robin order until success or exhaustion.
     """
-    payload["model"] = settings.DEFAULT_MODEL
+    client = get_shared_client()
     url = f"{settings.NVIDIA_BASE_URL}/chat/completions"
-    
-    total_keys = key_manager.get_status()["total_keys"]
+
+    total_keys = len(key_manager._keys)
     attempts = 0
 
-    while attempts < max(1, total_keys):
+    while attempts < total_keys:
         attempts += 1
         try:
             current_key = key_manager.get_next_key()
-        except AllKeysExhaustedException as exc:
-            logger.error(f"[NIMClient] {exc}")
+        except Exception as exc:
+            logger.error(f"[API] Cannot fetch next key: {exc}")
             status = key_manager.get_status()
             return JSONResponse(
-                status_code=429,
-                content={
-                    "error": {
-                        "message": f"All active API keys ({status['total_keys']}) are temporarily rate limited (HTTP 429).",
-                        "type": "rate_limit_error",
-                        "active_keys": status["active_keys"],
-                        "total_keys": status["total_keys"],
-                        "code": 429
-                    }
-                }
-            )
-        except AllKeysInvalidException as exc:
-            logger.error(f"[NIMClient] {exc}")
-            status = key_manager.get_status()
-            return JSONResponse(
-                status_code=401,
+                status_code=429 if status["active_keys"] == 0 and status["rate_limited_keys"] > 0 else 401,
                 content={
                     "error": {
                         "message": str(exc),
-                        "type": "invalid_api_key_error",
+                        "type": "all_keys_unavailable",
                         "active_keys": status["active_keys"],
-                        "invalid_keys": status["invalid_keys"],
-                        "total_keys": status["total_keys"],
-                        "code": 401
+                        "rate_limited_keys": status["rate_limited_keys"],
+                        "invalid_keys": status["invalid_keys"]
                     }
                 }
             )
 
+        masked_key = f"{current_key[:4]}...{current_key[-4:]}" if len(current_key) > 8 else "***"
         headers = {
             "Authorization": f"Bearer {current_key}",
-            "Content-Type": "application/json"
+            "Content-Type": "application/json",
+            "Accept": "application/json"
         }
-
-        masked_key = f"{current_key[:4]}...{current_key[-4:]}" if len(current_key) > 8 else "***"
-        client = get_shared_client()
 
         try:
             if not stream:
                 resp = await client.post(url, json=payload, headers=headers)
-                
-                # 1. Handle Rate Limit 429 (Silent Rotation)
+
                 if resp.status_code == 429:
                     key_manager.mark_429(current_key)
                     continue
 
-                # 2. Handle Invalid / Unauthorized Key (401 / 403)
                 if resp.status_code in (401, 403):
                     key_manager.mark_invalid(current_key, f"HTTP {resp.status_code}")
                     continue
 
-                # 3. Success (HTTP 200)
-                if resp.status_code == 200:
-                    key_manager.mark_success(current_key)
-                    res_json = resp.json()
+                if resp.status_code != 200:
+                    logger.error(f"[API] HTTP Error {resp.status_code} (Key {masked_key}): {resp.text}")
+                    return JSONResponse(status_code=resp.status_code, content=resp.json() if resp.headers.get("content-type", "").startswith("application/json") else {"error": resp.text})
 
-                    usage = res_json.get("usage", {})
-                    p_tokens = usage.get("prompt_tokens", 0)
-                    c_tokens = usage.get("completion_tokens", 0)
-                    t_tokens = usage.get("total_tokens", p_tokens + c_tokens)
-                    
-                    logger.info(
-                        f"[API] POST /v1/chat/completions - Status 200 - Key {masked_key} - "
-                        f"Model: {payload.get('model')} - Tokens: {p_tokens} prompt, {c_tokens} completion (Total: {t_tokens})"
-                    )
-                    return res_json
-                else:
-                    logger.error(f"[API] HTTP Error {resp.status_code} from NVIDIA NIM (Key {masked_key}): {resp.text}")
-                    content = resp.json() if resp.headers.get("content-type", "").startswith("application/json") else {"error": resp.text}
-                    return JSONResponse(status_code=resp.status_code, content=content)
+                key_manager.mark_success(current_key)
+                return resp.json()
 
             else:
-                # Streaming (stream=True)
                 req = client.build_request("POST", url, json=payload, headers=headers)
                 resp = await client.send(req, stream=True)
 
@@ -192,15 +166,13 @@ async def stream_anthropic_response(resp: httpx.Response, unused_client=None, mo
         }
     })
 
-    yield format_sse("content_block_start", {
-        "type": "content_block_start",
-        "index": 0,
-        "content_block": {"type": "text", "text": ""}
-    })
-
     yield format_sse("ping", {"type": "ping"})
 
     total_tokens = 0
+    current_block_index = -1
+    text_block_started = False
+    active_tool_blocks = {}  # tool_index -> {block_index, id, name}
+    final_stop_reason = "end_turn"
 
     try:
         buffer = ""
@@ -221,16 +193,81 @@ async def stream_anthropic_response(resp: httpx.Response, unused_client=None, mo
                     try:
                         data = json.loads(data_str)
                         choices = data.get("choices", [])
-                        if choices:
-                            delta = choices[0].get("delta", {})
-                            content_text = delta.get("content")
-                            if content_text:
+                        if not choices:
+                            continue
+                        
+                        choice = choices[0]
+                        finish_reason = choice.get("finish_reason")
+                        if finish_reason == "tool_calls":
+                            final_stop_reason = "tool_use"
+                        elif finish_reason == "length":
+                            final_stop_reason = "max_tokens"
+
+                        delta = choice.get("delta", {})
+
+                        # 1. Handle Text Delta
+                        content_text = delta.get("content")
+                        if content_text:
+                            total_tokens += 1
+                            if not text_block_started:
+                                current_block_index += 1
+                                text_block_started = True
+                                yield format_sse("content_block_start", {
+                                    "type": "content_block_start",
+                                    "index": current_block_index,
+                                    "content_block": {"type": "text", "text": ""}
+                                })
+
+                            yield format_sse("content_block_delta", {
+                                "type": "content_block_delta",
+                                "index": current_block_index,
+                                "delta": {"type": "text_delta", "text": content_text}
+                            })
+
+                        # 2. Handle Tool Call Delta
+                        tool_calls = delta.get("tool_calls", [])
+                        for tc in tool_calls:
+                            tc_idx = tc.get("index", 0)
+                            tc_id = tc.get("id")
+                            func = tc.get("function", {})
+                            fn_name = func.get("name")
+                            fn_args_delta = func.get("arguments", "")
+
+                            if tc_idx not in active_tool_blocks:
+                                if text_block_started:
+                                    yield format_sse("content_block_stop", {"type": "content_block_stop", "index": current_block_index})
+                                    text_block_started = False
+
+                                current_block_index += 1
+                                tool_id = tc_id or f"toolu_{uuid.uuid4().hex[:8]}"
+                                active_tool_blocks[tc_idx] = {
+                                    "block_index": current_block_index,
+                                    "id": tool_id,
+                                    "name": fn_name or ""
+                                }
+                                yield format_sse("content_block_start", {
+                                    "type": "content_block_start",
+                                    "index": current_block_index,
+                                    "content_block": {
+                                        "type": "tool_use",
+                                        "id": tool_id,
+                                        "name": fn_name or "",
+                                        "input": {}
+                                    }
+                                })
+
+                            blk_info = active_tool_blocks[tc_idx]
+                            if fn_args_delta:
                                 total_tokens += 1
                                 yield format_sse("content_block_delta", {
                                     "type": "content_block_delta",
-                                    "index": 0,
-                                    "delta": {"type": "text_delta", "text": content_text}
+                                    "index": blk_info["block_index"],
+                                    "delta": {
+                                        "type": "input_json_delta",
+                                        "partial_json": fn_args_delta
+                                    }
                                 })
+
                     except Exception:
                         pass
     except Exception as exc:
@@ -238,10 +275,18 @@ async def stream_anthropic_response(resp: httpx.Response, unused_client=None, mo
     finally:
         await resp.aclose()
 
-    yield format_sse("content_block_stop", {"type": "content_block_stop", "index": 0})
+    # Close open content blocks
+    if text_block_started:
+        yield format_sse("content_block_stop", {"type": "content_block_stop", "index": current_block_index})
+    for tc_idx, blk in active_tool_blocks.items():
+        yield format_sse("content_block_stop", {"type": "content_block_stop", "index": blk["block_index"]})
+
+    if active_tool_blocks and final_stop_reason == "end_turn":
+        final_stop_reason = "tool_use"
+
     yield format_sse("message_delta", {
         "type": "message_delta",
-        "delta": {"stop_reason": "end_turn", "stop_sequence": None},
+        "delta": {"stop_reason": final_stop_reason, "stop_sequence": None},
         "usage": {"output_tokens": total_tokens}
     })
     yield format_sse("message_stop", {"type": "message_stop"})
