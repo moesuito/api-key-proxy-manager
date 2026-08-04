@@ -7,12 +7,13 @@ A high-performance, low-latency API proxy server designed to manage and automati
 ### ✨ Features & Key Highlights
 
 - 🔄 **Automatic & Transparent Failover (HTTP 429)**: If an API key hits a rate limit (HTTP 429), the proxy sets `is_rate_limited=True`, automatically rotates to the next available key, and serves the request seamlessly without client-side errors.
-- 🎯 **Active Model-Specific Probing (Every 30s)**: When a key enters Rate Limit state, a silent background task probes the target model (`z-ai/glm-5.2`) every 30s using an ultra-lightweight 1-token request. As soon as HTTP 200 is returned, the key is immediately restored to active service.
+- 🎯 **Adaptive Exponential Backoff Probing (30s ➔ 60s ➔ 120s)**: Probes rate-limited keys using adaptive exponential backoff to minimize network overhead. As soon as HTTP 200 is returned, the key is immediately restored to active service.
+- 📊 **Real-Time Terminal Dashboard (`nimproxy stats`)**: Interactive live terminal dashboard with 1000ms polling showing live token metrics, served requests, and key pool status. Press `q` anytime to return to terminal.
+- 🎛️ **Quick CLI Commands (`nimproxy model` & `nimproxy key`)**: Instantly switch active models or add/remove API keys on the fly without running full setup.
 - 🛡️ **Invalid Key Protection (HTTP 401/403)**: If an invalid or unauthorized key is detected, it is marked as `is_invalid=True` and discarded for the rest of the current server session.
+- 🧹 **Automatic Log Retention**: Automatically limits session logs to a maximum of 20 log files and 30 days of retention.
 - 🤖 **One-Click Claude Code Integration**: Automatically configures `~/.claude/settings.json` during setup or via `nimproxy claude`.
-- 🔐 **Proxy Authentication (`PROXY_API_KEY`)**: Automatically generates and saves a fixed master key in `config.json` / `.env` to secure your proxy endpoints.
 - ⚡ **High-Range Default Port (`43100`)**: Runs on port `43100` by default to avoid port collisions with common web development servers.
-- ⚡ **Persistent Connection Pooling (Keep-Alive)**: Reuses TCP sockets and TLS handshakes with NVIDIA NIM for near-instant streaming response start times.
 
 ---
 
@@ -31,7 +32,13 @@ This installs `nimproxy` in `%APPDATA%\nimproxy`, adds `nimproxy` to your `PATH`
 
 ```bash
 nimproxy                  # Display server status report or auto-start background process
-nimproxy setup            # Run interactive guided setup wizard (keys, model, autostart)
+nimproxy stats            # Launch real-time live stats dashboard (1000ms polling, 'q' to exit)
+nimproxy model            # List available models or view active model
+nimproxy model set <name> # Switch active model instantly (e.g. meta/llama-3.3-70b-instruct)
+nimproxy key list         # List all configured API keys
+nimproxy key add <key>    # Add a new API key to failover pool
+nimproxy key remove <key> # Remove an API key from pool
+nimproxy setup            # Run interactive guided setup wizard
 nimproxy claude           # Automatically configure Claude Code (~/.claude/settings.json)
 nimproxy stop             # Stop background server process
 nimproxy restart          # Restart background server process
