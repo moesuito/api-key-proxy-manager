@@ -2,9 +2,10 @@ import os
 import sys
 import logging
 from datetime import datetime
+from app.config import get_app_dir
 
-# Ensure logs directory exists
-LOGS_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "logs")
+# Ensure logs directory exists in app directory
+LOGS_DIR = os.path.join(get_app_dir(), "logs")
 os.makedirs(LOGS_DIR, exist_ok=True)
 
 # Generate unique session filename
