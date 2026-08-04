@@ -77,15 +77,22 @@ def setup_logger(name: str = "nim_proxy") -> logging.Logger:
             datefmt='%Y-%m-%d %H:%M:%S'
         )
 
-        # Stream Handler (Console)
-        console_handler = logging.StreamHandler(sys.stdout)
-        console_handler.setFormatter(formatter)
-        logger.addHandler(console_handler)
+        # Stream Handler (Console - safely attached only when stdout is available)
+        if sys.stdout is not None:
+            try:
+                console_handler = logging.StreamHandler(sys.stdout)
+                console_handler.setFormatter(formatter)
+                logger.addHandler(console_handler)
+            except Exception:
+                pass
 
         # File Handler (Flushes to disk per session in real-time)
-        file_handler = FlushFileHandler(SESSION_LOG_FILE, encoding='utf-8')
-        file_handler.setFormatter(formatter)
-        logger.addHandler(file_handler)
+        try:
+            file_handler = FlushFileHandler(SESSION_LOG_FILE, encoding='utf-8')
+            file_handler.setFormatter(formatter)
+            logger.addHandler(file_handler)
+        except Exception:
+            pass
 
     return logger
 

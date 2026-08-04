@@ -1,20 +1,41 @@
-import time
+import asyncio
 from contextlib import asynccontextmanager
-from fastapi import FastAPI, Request
-from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse, StreamingResponse
+from fastapi import FastAPI, Request, Header
+from starlette.responses import JSONResponse, StreamingResponse
 
+from app.logger import logger
 from app.config import settings
 from app.key_manager import key_manager, verify_keys_on_startup
-from app.logger import logger
-from app.anthropic_translator import anthropic_request_to_openai, openai_response_to_anthropic
 from app.nim_client import send_request_with_failover, stream_openai_response, stream_anthropic_response
+from app.anthropic_translator import anthropic_request_to_openai, openai_response_to_anthropic
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """
+    FastAPI lifespan handler to execute lightweight 1-token key verification on startup.
+    """
+    logger.info(f"Starting NVIDIA NIM API Proxy v{settings.VERSION} on port {settings.PORT}...")
+    try:
+        asyncio.create_task(verify_keys_on_startup(settings.NVIDIA_BASE_URL))
+    except Exception as e:
+        logger.error(f"[StartupCheck] Error launching key verification: {e}")
+    yield
+    logger.info("Shutting down proxy server.")
+
+
+app = FastAPI(
+    title="NVIDIA NIM API Proxy Manager",
+    version=settings.VERSION,
+    description="Dual-protocol proxy (OpenAI & Anthropic Compatible) with key failover",
+    lifespan=lifespan
+)
 
 
 def verify_proxy_auth(request: Request) -> bool:
     """
-    Verifies if incoming request provided valid PROXY_API_KEY.
-    Accepts header 'Authorization: Bearer <KEY>' or 'x-api-key: <KEY>'.
+    Verifies authentication against PROXY_API_KEY.
+    Supports both Authorization: Bearer <KEY> and x-api-key: <KEY> headers.
     """
     expected_key = settings.PROXY_API_KEY
     if not expected_key:
@@ -33,79 +54,30 @@ def verify_proxy_auth(request: Request) -> bool:
     return False
 
 
-@asynccontextmanager
-async def lifespan(app: FastAPI):
-    keys = settings.NVIDIA_API_KEYS
-    key_manager.set_keys(keys)
-    host_url = f"http://localhost:{settings.PORT}"
-    
-    logger.info("=" * 65)
-    logger.info(f" NVIDIA NIM API PROXY STARTED SUCCESSFULLY")
-    logger.info(f" PROXY MASTER KEY : {settings.PROXY_API_KEY}")
-    logger.info(f" DEFAULT MODEL    : {settings.DEFAULT_MODEL}")
-    logger.info(f" OPENAI ENDPOINT  : {host_url}/v1")
-    logger.info(f" ANTHROPIC ENDPOINT: {host_url}")
-    logger.info("-----------------------------------------------------------------")
-    # Verify and validate all configured keys on startup
-    await verify_keys_on_startup(settings.NVIDIA_BASE_URL)
-    logger.info("=" * 65)
-    yield
-
-
-app = FastAPI(
-    title="NVIDIA NIM API Key Proxy",
-    description="OpenAI & Anthropic Compatible Proxy with Authentication & Automatic Key Rotation",
-    version="1.0.0",
-    lifespan=lifespan
-)
-
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
-
-
 @app.api_route("/api/hello", methods=["GET", "HEAD"])
-async def api_hello():
-    """Ping/healthcheck endpoint queried by Claude Code on startup."""
-    return {"status": "ok", "service": "nvidia-nim-proxy"}
+async def claude_code_healthcheck():
+    """
+    Endpoint queried by Claude Code on startup to test connectivity.
+    """
+    return JSONResponse(status_code=200, content={"status": "ok", "service": "nimproxy"})
 
 
 @app.get("/health")
 async def health_check():
-    """Health check and key usage metrics endpoint."""
-    status = key_manager.get_status()
+    """Health check endpoint exposing server metrics and key manager status."""
     return {
         "status": "online",
+        "version": settings.VERSION,
         "default_model": settings.DEFAULT_MODEL,
-        "proxy_api_key_configured": bool(settings.PROXY_API_KEY),
-        "key_manager": status
-    }
-
-
-@app.get("/v1/models")
-async def list_models():
-    """OpenAI compatible list models endpoint."""
-    return {
-        "object": "list",
-        "data": [
-            {
-                "id": settings.DEFAULT_MODEL,
-                "object": "model",
-                "created": int(time.time()),
-                "owned_by": "nvidia"
-            }
-        ]
+        "nvidia_base_url": settings.NVIDIA_BASE_URL,
+        "key_manager": key_manager.get_status()
     }
 
 
 @app.post("/v1/chat/completions")
-async def openai_chat_completions(request: Request):
+async def chat_completions(request: Request):
     """
-    OpenAI compatible chat completions endpoint (POST /v1/chat/completions).
+    Native OpenAI compatible endpoint (POST /v1/chat/completions).
     """
     if not verify_proxy_auth(request):
         logger.warning("[Auth] Access denied on /v1/chat/completions: Invalid or missing PROXY_API_KEY.")
@@ -113,7 +85,7 @@ async def openai_chat_completions(request: Request):
             status_code=401,
             content={
                 "error": {
-                    "message": "Invalid or missing Proxy API Key. Provide PROXY_API_KEY in Authorization header.",
+                    "message": "Invalid or missing Proxy API Key. Provide PROXY_API_KEY in Authorization Bearer header.",
                     "type": "authentication_error",
                     "code": 401
                 }
@@ -139,6 +111,27 @@ async def openai_chat_completions(request: Request):
         )
     else:
         return result
+
+
+@app.get("/v1/models")
+async def list_models(request: Request):
+    """
+    OpenAI compatible models list endpoint.
+    """
+    if not verify_proxy_auth(request):
+        return JSONResponse(status_code=401, content={"error": "Unauthorized"})
+
+    return {
+        "object": "list",
+        "data": [
+            {
+                "id": settings.DEFAULT_MODEL,
+                "object": "model",
+                "created": 1700000000,
+                "owned_by": "nvidia-nim-proxy"
+            }
+        ]
+    }
 
 
 @app.post("/v1/messages")
@@ -187,4 +180,4 @@ async def anthropic_messages(request: Request):
 
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run("app.main:app", host=settings.HOST, port=settings.PORT, reload=True)
+    uvicorn.run(app, host=settings.HOST, port=settings.PORT)

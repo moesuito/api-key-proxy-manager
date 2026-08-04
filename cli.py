@@ -739,8 +739,7 @@ Examples:
         return
 
     # Default action (typing 'nimproxy')
-    cfg = load_config_data()
-    if not cfg.get("nvidia_api_keys"):
+    if not settings.NVIDIA_API_KEYS:
         run_interactive_setup()
         return
 

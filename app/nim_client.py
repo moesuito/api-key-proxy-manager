@@ -17,6 +17,7 @@ def get_shared_client() -> httpx.AsyncClient:
     """
     Returns a singleton HTTP AsyncClient with high-performance connection pooling.
     Keeps TCP/TLS connections alive to NVIDIA NIM endpoints.
+    Uses strict 15s read timeout to failover rapidly to alternative keys if one key hangs.
     """
     global _shared_client
     if _shared_client is None or _shared_client.is_closed:
@@ -26,7 +27,8 @@ def get_shared_client() -> httpx.AsyncClient:
                 max_connections=200,
                 keepalive_expiry=60.0
             ),
-            timeout=httpx.Timeout(10.0, read=120.0, connect=10.0),
+            timeout=httpx.Timeout(timeout=15.0, connect=5.0, read=15.0),
+            trust_env=False,
             http2=False
         )
     return _shared_client
@@ -34,7 +36,7 @@ def get_shared_client() -> httpx.AsyncClient:
 
 async def send_request_with_failover(payload: Dict[str, Any], stream: bool = False) -> Tuple[Any, Any]:
     """
-    Sends request to NVIDIA NIM with automatic failover on HTTP 429 (Rate Limit).
+    Sends request to NVIDIA NIM with automatic failover on HTTP 429 (Rate Limit) or timeouts.
     Tries active keys in round-robin order until success or exhaustion.
     """
     client = get_shared_client()
@@ -113,10 +115,11 @@ async def send_request_with_failover(payload: Dict[str, Any], stream: bool = Fal
                 logger.info(f"[API] POST /v1/chat/completions (Stream) - Connection established - Key {masked_key} - Model: {payload.get('model')}")
                 return resp, None
 
-        except httpx.RequestError as exc:
+        except (httpx.RequestError, httpx.TimeoutException) as exc:
             err_name = type(exc).__name__
             err_msg = str(exc) or "Timeout / Connection reset by peer"
-            logger.error(f"[API] Network connection error with Key {masked_key}: {err_name} ({err_msg})")
+            logger.warning(f"[API] Key {masked_key} connection timeout/error ({err_name}: {err_msg}). Auto-rotating to next key...")
+            key_manager.mark_429(current_key)
             continue
 
     # All attempts failed

@@ -10,18 +10,18 @@ def test_health_endpoint():
     assert response.status_code == 200
     data = response.json()
     assert data["status"] == "online"
-    assert data["default_model"] == "z-ai/glm-5.2"
-    assert data["proxy_api_key_configured"] is True
+    assert data["default_model"] == settings.DEFAULT_MODEL
     assert "key_manager" in data
 
 
 def test_v1_models_endpoint():
-    response = client.get("/v1/models")
+    headers = {"Authorization": f"Bearer {settings.PROXY_API_KEY}"}
+    response = client.get("/v1/models", headers=headers)
     assert response.status_code == 200
     data = response.json()
     assert data["object"] == "list"
     assert len(data["data"]) >= 1
-    assert data["data"][0]["id"] == "z-ai/glm-5.2"
+    assert data["data"][0]["id"] == settings.DEFAULT_MODEL
 
 
 def test_unauthorized_access():

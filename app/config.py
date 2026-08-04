@@ -13,12 +13,17 @@ def get_app_dir() -> str:
     appdata = os.getenv("APPDATA")
     if appdata:
         target_dir = os.path.join(appdata, "nimproxy")
-        if os.path.exists(target_dir):
+        if os.path.exists(os.path.join(target_dir, "app")):
             return target_dir
     return os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 
 def get_config_file_path() -> str:
+    appdata = os.getenv("APPDATA")
+    if appdata:
+        target_dir = os.path.join(appdata, "nimproxy")
+        os.makedirs(target_dir, exist_ok=True)
+        return os.path.join(target_dir, "config.json")
     return os.path.join(get_app_dir(), "config.json")
 
 
@@ -34,9 +39,8 @@ def load_config_data() -> Dict[str, Any]:
 
 
 def save_config_data(data: Dict[str, Any]):
-    config_dir = get_app_dir()
-    os.makedirs(config_dir, exist_ok=True)
     config_path = get_config_file_path()
+    os.makedirs(os.path.dirname(config_path), exist_ok=True)
     with open(config_path, "w", encoding="utf-8") as f:
         json.dump(data, f, indent=2)
 
