@@ -9,65 +9,53 @@ A high-performance, low-latency API proxy server designed to manage and automati
 - 🔄 **Automatic & Transparent Failover (HTTP 429)**: If an API key hits a rate limit (HTTP 429), the proxy sets `is_rate_limited=True`, automatically rotates to the next available key, and serves the request seamlessly without client-side errors.
 - 🎯 **Active Model-Specific Probing (Every 30s)**: When a key enters Rate Limit state, a silent background task probes the target model (`z-ai/glm-5.2`) every 30s using an ultra-lightweight 1-token request. As soon as HTTP 200 is returned, the key is immediately restored to active service.
 - 🛡️ **Invalid Key Protection (HTTP 401/403)**: If an invalid or unauthorized key is detected, it is marked as `is_invalid=True` and discarded for the rest of the current server session.
-- 🔐 **Proxy Authentication (`PROXY_API_KEY`)**: Automatically generates and saves a fixed master key in `.env` to secure your proxy endpoints.
+- 🤖 **One-Click Claude Code Integration**: Automatically configures `~/.claude/settings.json` during setup or via `nimproxy claude`.
+- 🔐 **Proxy Authentication (`PROXY_API_KEY`)**: Automatically generates and saves a fixed master key in `config.json` / `.env` to secure your proxy endpoints.
+- ⚡ **High-Range Default Port (`43100`)**: Runs on port `43100` by default to avoid port collisions with common web development servers.
 - ⚡ **Persistent Connection Pooling (Keep-Alive)**: Reuses TCP sockets and TLS handshakes with NVIDIA NIM for near-instant streaming response start times.
-- 📝 **Real-Time Per-Session Logging**: Generates session log files in `logs/` tracking token consumption (prompt, completion, total) and key rotation events without log spam.
 
 ---
 
-### ⚙️ Configuration (`.env`)
+### 🚀 One-Line Installation (Windows)
 
-Create or edit `.env` in the project root directory (refer to `.env.example`):
-
-```env
-# Register API Keys in individual lines (numbered):
-NVIDIA_API_KEY_1=nvapi-your-key-1
-NVIDIA_API_KEY_2=nvapi-your-key-2
-NVIDIA_API_KEY_3=nvapi-your-key-3
-
-# Fixed Default Model
-DEFAULT_MODEL=z-ai/glm-5.2
-
-# NVIDIA NIM Base URL
-NVIDIA_BASE_URL=https://integrate.api.nvidia.com/v1
-
-# Probe interval in seconds for rate-limited keys
-PROBE_INTERVAL_SECONDS=30
-
-HOST=0.0.0.0
-PORT=8000
-
-# Fixed Proxy Master API Key (auto-generated on first launch)
-PROXY_API_KEY=sk-nim-...
+Run in PowerShell:
+```powershell
+irm https://raw.githubusercontent.com/moesuito/api-key-proxy-manager/master/install.ps1 | iex
 ```
 
+This installs `nimproxy` in `%APPDATA%\nimproxy`, adds `nimproxy` to your `PATH`, and launches the guided setup wizard!
+
 ---
 
-### 🚀 How to Run
+### 💻 CLI Commands (`nimproxy`)
 
-#### Windows (using batch script):
-Double click **`start.bat`**.
-
-#### Terminal (manual):
 ```bash
-python -m venv .venv
-.\.venv\Scripts\pip.exe install -r requirements.txt
-.\.venv\Scripts\python.exe -m app.main
+nimproxy                  # Display server status report or auto-start background process
+nimproxy setup            # Run interactive guided setup wizard (keys, model, autostart)
+nimproxy claude           # Automatically configure Claude Code (~/.claude/settings.json)
+nimproxy stop             # Stop background server process
+nimproxy restart          # Restart background server process
+nimproxy update           # Check GitHub releases for updates
+nimproxy version          # Display version
 ```
 
 ---
 
 ### 🤖 Integration with Claude Code
 
-Configure `~/.claude/settings.json` (or `C:\Users\<YourUser>\.claude\settings.json`):
+Simply run:
+```bash
+nimproxy claude
+```
+
+Or manually configure `~/.claude/settings.json` (or `C:\Users\<YourUser>\.claude\settings.json`):
 
 ```json
 {
   "env": {
-    "ANTHROPIC_BASE_URL": "http://localhost:8000",
+    "ANTHROPIC_BASE_URL": "http://localhost:43100",
     "ANTHROPIC_AUTH_TOKEN": "your-PROXY_API_KEY-here",
-    "ANTHROPIC_MODEL": "z-ai/glm-5.2",
-    "CLAUDE_CODE_MAX_CONTEXT_TOKENS": "1000000"
+    "ANTHROPIC_MODEL": "z-ai/glm-5.2"
   }
 }
 ```
@@ -78,8 +66,8 @@ Configure `~/.claude/settings.json` (or `C:\Users\<YourUser>\.claude\settings.js
 
 | Endpoint | Method | Description |
 | :--- | :--- | :--- |
-| `POST /v1/chat/completions` | `POST` | Native OpenAI compatible chat completions endpoint. |
-| `POST /v1/messages` | `POST` | Anthropic compatible messages endpoint (used by Claude Code). |
+| `POST /v1/chat/completions` | `POST` | Native OpenAI compatible chat completions endpoint (`http://localhost:43100/v1/chat/completions`). |
+| `POST /v1/messages` | `POST` | Anthropic compatible messages endpoint (`http://localhost:43100/v1/messages`). |
 | `GET /v1/models` | `GET` | Returns available models list (OpenAI compatible). |
 | `GET /health` | `GET` | Returns proxy health status and key metrics. |
 | `GET /api/hello` | `GET/HEAD` | Fast health check endpoint queried by Claude Code on startup. |

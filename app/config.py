@@ -6,6 +6,7 @@ from typing import List, Dict, Any
 from dotenv import load_dotenv
 
 APP_VERSION = "0.2.0"
+DEFAULT_PORT = 43100
 
 def get_app_dir() -> str:
     """Returns the application data directory (%APPDATA%\\nimproxy or local root)."""
@@ -140,7 +141,7 @@ class Settings:
         cfg = load_config_data()
         if cfg.get("port"):
             return int(cfg["port"])
-        return int(os.getenv("PORT", "8000"))
+        return int(os.getenv("PORT", str(DEFAULT_PORT)))
 
 
 settings = Settings()

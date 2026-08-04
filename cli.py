@@ -34,7 +34,7 @@ def load_server_pid() -> Optional[int]:
 
 
 def is_server_running() -> Tuple[bool, Optional[Dict]]:
-    """Checks if nimproxy server is running locally on http://localhost:8000/health."""
+    """Checks if nimproxy server is running locally on http://localhost:<PORT>/health."""
     url = f"http://localhost:{settings.PORT}/health"
     try:
         resp = httpx.get(url, timeout=1.5)
@@ -101,7 +101,7 @@ def stop_background_server() -> bool:
         except Exception:
             pass
 
-    # Also kill any python process listening on port 8000 if pid failed
+    # Also kill any python process listening on server port if pid failed
     time.sleep(0.5)
     running, _ = is_server_running()
     return not running
@@ -128,6 +128,49 @@ def set_windows_autostart(enable: bool):
         winreg.CloseKey(key)
     except Exception as e:
         print(f"[Warning] Failed to update Windows Registry startup: {e}")
+
+
+def configure_claude_code(proxy_key: str = None, model_name: str = None, port: int = None) -> bool:
+    """Configures Claude Code (~/.claude/settings.json) to use nimproxy."""
+    user_home = os.path.expanduser("~")
+    claude_dir = os.path.join(user_home, ".claude")
+    settings_file = os.path.join(claude_dir, "settings.json")
+
+    proxy_key = proxy_key or settings.PROXY_API_KEY
+    model_name = model_name or settings.DEFAULT_MODEL
+    port = port or settings.PORT
+
+    try:
+        os.makedirs(claude_dir, exist_ok=True)
+        data = {}
+        if os.path.exists(settings_file):
+            try:
+                with open(settings_file, "r", encoding="utf-8") as f:
+                    data = json.load(f)
+            except Exception:
+                data = {}
+
+        if "env" not in data or not isinstance(data["env"], dict):
+            data["env"] = {}
+
+        data["env"]["ANTHROPIC_BASE_URL"] = f"http://localhost:{port}"
+        data["env"]["ANTHROPIC_AUTH_TOKEN"] = proxy_key
+        data["env"]["ANTHROPIC_MODEL"] = model_name
+
+        # Clean up conflicting auth keys if present
+        data["env"].pop("ANTHROPIC_API_KEY", None)
+
+        with open(settings_file, "w", encoding="utf-8") as f:
+            json.dump(data, f, indent=2)
+
+        print(f"[✓] Claude Code successfully configured at {settings_file}!")
+        print(f"    Base URL   : http://localhost:{port}")
+        print(f"    Auth Token : {proxy_key[:8]}...")
+        print(f"    Model      : {model_name}")
+        return True
+    except Exception as e:
+        print(f"[!] Failed to configure Claude Code: {e}")
+        return False
 
 
 def fetch_available_models(keys: List[str]) -> List[str]:
@@ -233,14 +276,19 @@ def run_interactive_setup():
 
     print(f"\n[✓] Selected Model: {selected_model}")
 
-    # Step 4: Master Proxy Key
+    # Step 4: Claude Code Auto Configuration
+    print("\n--- Step 3: Claude Code Integration ---")
+    claude_str = input("Automatically configure Claude Code (~/.claude/settings.json)? [Y/n]: ").strip().lower()
+    setup_claude = claude_str != 'n'
+
+    # Step 5: Master Proxy Key
     existing_config = load_config_data()
     proxy_key = existing_config.get("proxy_api_key")
     if not proxy_key:
         import secrets
         proxy_key = f"sk-nim-{secrets.token_hex(16)}"
 
-    # Step 5: Save Config
+    # Step 6: Save Config
     config_data = {
         "proxy_api_key": proxy_key,
         "nvidia_api_keys": keys,
@@ -249,13 +297,17 @@ def run_interactive_setup():
         "probe_interval_seconds": 30,
         "autostart_windows": autostart,
         "host": "0.0.0.0",
-        "port": 8000,
+        "port": settings.PORT,
         "version": APP_VERSION
     }
     save_config_data(config_data)
     set_windows_autostart(autostart)
 
-    # Step 6: Start Server in Background
+    if setup_claude:
+        print()
+        configure_claude_code(proxy_key, selected_model, settings.PORT)
+
+    # Step 7: Start Server in Background
     print("\nStarting background server...")
     success = start_background_server()
 
@@ -267,8 +319,8 @@ def run_interactive_setup():
     print("=" * 65)
     print(f" Master Proxy API Key : {proxy_key}")
     print(f" Active Model        : {selected_model}")
-    print(f" OpenAI Endpoint     : http://localhost:8000/v1")
-    print(f" Anthropic Endpoint  : http://localhost:8000")
+    print(f" OpenAI Endpoint     : http://localhost:{settings.PORT}/v1")
+    print(f" Anthropic Endpoint  : http://localhost:{settings.PORT}")
     print(f" Configured Keys     : {len(keys)} Key(s) Active")
     print(f" Windows Autostart   : {'Enabled' if autostart else 'Disabled'}")
     print("=" * 65 + "\n")
@@ -300,7 +352,7 @@ def show_status_report(health_data: Dict):
         errs = k.get("429_errors", 0)
         print(f"   - Key {k_masked}: {k_status} (Total Requests: {reqs}, Rate Limits: {errs})")
     print("=" * 65)
-    print(" Commands: 'nimproxy --setup' to reconfigure | 'nimproxy stop' to halt")
+    print(" Commands: 'nimproxy --setup' to reconfigure | 'nimproxy claude' for Claude Code")
 
 
 def check_for_updates() -> bool:
@@ -336,6 +388,7 @@ Usage:
   nimproxy stop             Stop background server process
   nimproxy restart          Restart background server process
   nimproxy setup / config   Run interactive guided setup wizard
+  nimproxy claude           Auto-configure Claude Code (~/.claude/settings.json)
   nimproxy update           Check GitHub releases for updates
   nimproxy version          Show current version
 
@@ -346,6 +399,7 @@ Options:
 Examples:
   nimproxy                  Checks if background server is online and displays key metrics
   nimproxy setup            Re-configures API keys, model selection, or Windows startup
+  nimproxy claude           Integrates nimproxy with Claude Code automatically
   nimproxy stop             Gracefully stops the background server
 
 Endpoints Provided:
@@ -358,6 +412,11 @@ Endpoints Provided:
 
     if "--setup" in args or "setup" in args or "config" in args:
         run_interactive_setup()
+        return
+
+    if "claude" in args:
+        print("Configuring Claude Code settings...")
+        configure_claude_code()
         return
 
     if "stop" in args:
@@ -405,7 +464,7 @@ Endpoints Provided:
             if health_after:
                 show_status_report(health_after)
             else:
-                print(f"[✓] nimproxy server started successfully in background! (Model: {settings.DEFAULT_MODEL})")
+                print(f"[✓] nimproxy server started successfully in background on port {settings.PORT}!")
         else:
             print("[ERRO] Failed to start nimproxy server in background.")
 
