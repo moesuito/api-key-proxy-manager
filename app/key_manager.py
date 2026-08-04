@@ -62,8 +62,9 @@ def _build_probe_payload() -> Dict:
 
 async def probe_key_task(key_info: KeyInfo, base_url: str, initial_interval: float = 30.0, key_manager_ref=None, interval: Optional[float] = None):
     """
-    Silently probes a rate-limited key with adaptive exponential backoff (30s -> 60s -> 120s max).
-    As soon as HTTP 200 is returned, resets interval back to initial state and sets is_rate_limited to False.
+    Silently probes a rate-limited key with progressive backoff up to a maximum cap of 1 hour (3600s).
+    Progression: 30s -> 30s -> 60s -> 120s -> 300s (5m) -> 900s (15m) -> 1800s (30m) -> 3600s (1h max cap).
+    As soon as HTTP 200 is returned, resets interval back to initial state (30s) and sets is_rate_limited to False.
     """
     if interval is not None:
         initial_interval = interval
@@ -78,11 +79,13 @@ async def probe_key_task(key_info: KeyInfo, base_url: str, initial_interval: flo
     }
     payload = _build_probe_payload()
 
-    current_interval = initial_interval
-    max_interval = 120.0  # Backoff cap in seconds
+    # Progressive backoff steps up to 3600s (1 hour max cap)
+    backoff_steps = [initial_interval, initial_interval, 60.0, 120.0, 300.0, 900.0, 1800.0, 3600.0]
+    step_idx = 0
 
     try:
         while key_info.is_rate_limited and not key_info.is_invalid:
+            current_interval = backoff_steps[min(step_idx, len(backoff_steps) - 1)]
             await asyncio.sleep(current_interval)
             key_info.last_probe_time = time.time()
 
@@ -96,13 +99,13 @@ async def probe_key_task(key_info: KeyInfo, base_url: str, initial_interval: flo
                         )
                         break
                     elif resp.status_code == 429:
-                        current_interval = min(current_interval * 2, max_interval)
+                        step_idx += 1
                     elif resp.status_code in (401, 403):
                         if key_manager_ref:
                             key_manager_ref.mark_invalid(key_info.key, f"HTTP {resp.status_code} during probe")
                         break
                 except Exception:
-                    current_interval = min(current_interval * 2, max_interval)
+                    step_idx += 1
     finally:
         key_info.probe_in_progress = False
 
